@@ -7,27 +7,73 @@ import open3d as o3d
 import alphashape
 from matplotlib.patches import Polygon
 from copy import copy
+import time
+from datetime import datetime
+from tqdm import tqdm
+import os
+
+
+def log(message, last_time, filename):
+    current_time = time.time()
+    timestamp = datetime.now().strftime("%Y-%m-%d, %H:%M:%S")
+    elapsed_time = current_time - last_time
+    log_message = f"{timestamp} - {message} Elapsed time: {elapsed_time:.2f} s."
+    with open(filename, 'a') as f:
+        f.write(log_message)
+    print(log_message)
+    return current_time  # Return the current time so it can be used as the "last_time" for the next log
 
 
 def read_e57(file_name):
     # read the documentation at https://github.com/davidcaron/pye57
     e57 = pye57.E57(file_name)
     data_raw = e57.read_scan_raw(0)
-    print('e57 data imported')
     return data_raw
 
 
-def e57_data_to_xyz(e57_data, output_file_name):
-    x = e57_data['cartesianX']
-    y = e57_data['cartesianY']
-    z = e57_data['cartesianZ']
-    red = e57_data['colorRed']
-    green = e57_data['colorGreen']
-    blue = e57_data['colorBlue']
-    intensity = e57_data['intensity']
-    df = pd.DataFrame({'//X': x, 'Y': y, 'Z': z, 'R': red, 'G': green, 'B': blue, 'Intensity': intensity})
+'''
+def e57_data_to_xyz(e57_data_array, output_file_name):
+    x, y, z, red, green, blue, intensity = [], [], [], [], [], [], []
+    for e57_data in e57_data_array:
+        x.extend(e57_data['cartesianX'])
+        y.extend(e57_data['cartesianY'])
+        z.extend(e57_data['cartesianZ'])
+        red.extend(e57_data['colorRed'])
+        green.extend(e57_data['colorGreen'])
+        blue.extend(e57_data['colorBlue'])
+        intensity.extend(e57_data['intensity'])
+
+    df = pd.DataFrame({'X': x, 'Y': y, 'Z': z, 'R': red, 'G': green, 'B': blue, 'Intensity': intensity})
     df.to_csv(output_file_name, sep='\t', index=False)
-    print('e57 converted to ASCII format, saved as %s' % output_file_name)
+'''
+
+
+def e57_data_to_xyz(e57_data_array, output_file_name, chunk_size=10000):
+    for idx, e57_data in enumerate(e57_data_array):
+        num_chunks = (len(e57_data['cartesianX']) - 1) // chunk_size + 1  # Compute the number of chunks
+        print(f"\nProcessing e57 file no. {idx + 1}...")
+
+        for i in tqdm(range(num_chunks)):  # tqdm will display a progress bar
+            start = i * chunk_size
+            end = min((i + 1) * chunk_size, len(e57_data['cartesianX']))
+
+            x = np.array(e57_data['cartesianX'][start:end])
+            y = np.array(e57_data['cartesianY'][start:end])
+            z = np.array(e57_data['cartesianZ'][start:end])
+            red = np.array(e57_data['colorRed'][start:end])
+            green = np.array(e57_data['colorGreen'][start:end])
+            blue = np.array(e57_data['colorBlue'][start:end])
+            intensity = np.array(e57_data['intensity'][start:end])
+
+            df = pd.DataFrame({'X': x, 'Y': y, 'Z': z, 'R': red, 'G': green, 'B': blue, 'Intensity': intensity})
+            # Round the DataFrame entries to 3 decimal places
+            df = df.round(3)
+
+            # Check if file exists and is not empty
+            if os.path.exists(output_file_name) and os.path.getsize(output_file_name) > 0:
+                df.to_csv(output_file_name, sep='\t', index=False, header=False, mode='a')
+            else:
+                df.to_csv(output_file_name, sep='\t', index=False, header=True, mode='a')
 
 
 def save_xyz(points, output_file_name):
@@ -35,19 +81,19 @@ def save_xyz(points, output_file_name):
     y = points[:, 1]
     z = points[:, 2]
     # df = pd.DataFrame({'//X': x, 'Y': y, 'Z': z, 'R': red, 'G': green, 'B': blue, 'Intensity': intensity})
-    # df.to_csv(output_file_name, sep='\t', index=False)
     df = pd.DataFrame({'//X': x, 'Y': y, 'Z': z})
     df.to_csv(output_file_name, sep='\t', index=False)
     print('Points saved as %s' % output_file_name)
 
 
-def load_xyz_file(file_name):
+def load_xyz_file(file_name, plot_xyz=False):
+    # df = pd.read_csv(file_name, delim_whitespace=True, header=0)
+    # print(df.dtypes)
     pcd = np.loadtxt(file_name, skiprows=1)
     xyz = pcd[:, :3]
     rgb = pcd[:, 3:6]
 
     # show plot of xyz points from top view: (x, y) coordinates and with rgb-colored points
-    plot_xyz = False
     if plot_xyz:
         plt.figure(figsize=(8, 5), dpi=150)
         plt.scatter(xyz[:, 0], xyz[:, 1], c=rgb / 255, s=0.05)
@@ -128,12 +174,7 @@ def identify_slabs_from_point_cloud(points_xyz, points_rgb, z_step, plot_segment
     z_min, z_max = min(points_xyz[:, 2]), max(points_xyz[:, 2])
     n_steps = int((z_max - z_min) / z_step + 1)
     z_array, n_points_array = [], []
-    progress_percent_limit = 10
-    for i in range(n_steps):
-        percent_done = int(i / n_steps * 100)
-        if percent_done >= progress_percent_limit:
-            print('Progress searching for horiz_surface candidate z-coordinates: %d %%' % int(percent_done))
-            progress_percent_limit += 10
+    for i in tqdm(range(n_steps), desc="Progress searching for horiz_surface candidate z-coordinates"):
         z = z_min + i * z_step
         idx_selected_xyz = np.where((z < points_xyz[:, 2]) & (points_xyz[:, 2] < (z + z_step)))[0]
         z_array.append(z)
@@ -153,13 +194,12 @@ def identify_slabs_from_point_cloud(points_xyz, points_rgb, z_step, plot_segment
 
     # extract xyz points within an interval given by horiz_surface_candidates (lie within the range given by the
     # z-coordinates in horiz_surface candidates)
-    for i in range(len(horiz_surface_candidates)):
-        print('Extracting points for a horiz_surface no. %d of %d.' % (i + 1, len(horiz_surface_candidates)))
+    for i in tqdm(range(len(horiz_surface_candidates)), desc="Extracting points for horizontal surfaces"):
         horiz_surface_idx = np.where(
             (horiz_surface_candidates[i][0] < points_xyz[:, 2]) &
             (points_xyz[:, 2] < horiz_surface_candidates[i][1]))[0]
-        horiz_surface_planes.append(np.array(points_xyz[horiz_surface_idx]))
-        horiz_surface_colors.append(np.array(points_rgb[horiz_surface_idx]) / 255)
+        horiz_surface_planes.append(points_xyz[horiz_surface_idx])
+        horiz_surface_colors.append(points_rgb[horiz_surface_idx] / 255)
     # eq, idx_inliers = ransac_plane(single_horiz_surface_selected, threshold=ransac_threshold, iterations=n_iterations)
     # inliers = points_xyz[idx_inliers]
 
