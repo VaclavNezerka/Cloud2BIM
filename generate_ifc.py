@@ -7,6 +7,7 @@ import ifcopenshell.util.placement
 import datetime
 import random
 import uuid
+import math
 
 
 class IFCmodel:
@@ -102,7 +103,7 @@ class IFCmodel:
             ContextIdentifier="Body",
             ContextType="Model",
             CoordinateSpaceDimension=3,
-            Precision=1E-6,
+            Precision=0.0001,
             WorldCoordinateSystem=axis_placement
         )
 
@@ -111,6 +112,17 @@ class IFCmodel:
             "IfcGeometricRepresentationSubContext",
             ParentContext=self.context,
             ContextIdentifier="Body",
+            ContextType="Model",
+            TargetScale=None,
+            TargetView="MODEL_VIEW",
+            UserDefinedTargetView=None
+        )
+
+        # Create geometric representation sub-context (swept-solid objects)
+        self.geom_rep_sub_context_walls = self.ifc_file.create_entity(
+            "IfcGeometricRepresentationSubContext",
+            ParentContext=self.context,
+            ContextIdentifier='Axis',
             ContextType="Model",
             TargetScale=None,
             TargetView="MODEL_VIEW",
@@ -207,7 +219,7 @@ class IFCmodel:
                                                     ElevationOfRefHeight=self.site_elevation
                                                     )
 
-    # Create IfcRelAggregates entities to connect the site and the building
+        # Create IfcRelAggregates entities to connect the site and the building
         self.ifc_file.create_entity("IfcRelAggregates",
                                     GlobalId=ifcopenshell.guid.new(),
                                     OwnerHistory=self.owner_history,
@@ -249,7 +261,6 @@ class IFCmodel:
         return building_storey
 
     def create_slab(self, slab_name, points, slab_z_position, slab_height, material_name):
-
         # Convert points to IfcCartesianPoint instances
         polygon_points = [
             self.ifc_file.create_entity("IfcCartesianPoint", Coordinates=point)
@@ -343,10 +354,194 @@ class IFCmodel:
             GlobalId=ifcopenshell.guid.new(),
             OwnerHistory=self.owner_history,
             Name=product_name,
-            Description="Building container for elements",
+            Description="Storey container for elements",
             RelatedElements=[product],
             RelatingStructure=storey
         )
+
+    # wall definition
+
+    def create_material_layer(self, wall_thickness=0.3, material_name="Masonry - brick"):
+        material_layer = self.ifc_file.create_entity(
+            "IfcMaterialLayer",
+            LayerThickness=wall_thickness,
+            Name='Core',
+            IsVentilated=".F.",
+            Category='LoadBearing',
+            Priority=99,
+            Material=self.ifc_file.create_entity(
+                "IfcMaterial",
+                Name=material_name
+            )
+        )
+        return material_layer
+
+    def create_material_layer_set(self, material_layers=None, wall_thickness=0.3):
+        wall_thickness = wall_thickness * 1000
+        # Create an IfcMaterialLayerSet using the provided layers
+        material_layer_set = self.ifc_file.create_entity(
+            "IfcMaterialLayerSet",
+            MaterialLayers=material_layers,
+            LayerSetName='Concrete loadbearing wall - %d mm' % wall_thickness
+        )
+
+        return material_layer_set
+
+    def create_material_layer_set_usage(self, material_layer_set, wall_thickness):
+        # Create an IFCMaterialLayerSetUsage using the provided material layer set
+        material_layer_set_usage = self.ifc_file.create_entity(
+            "IfcMaterialLayerSetUsage",
+            ForLayerSet=material_layer_set,
+            LayerSetDirection='AXIS2',
+            DirectionSense='POSITIVE',
+            OffsetFromReferenceLine=-(wall_thickness / 2)  # Adjust the offset as needed
+        )
+        return material_layer_set_usage
+
+    def wall_placement(self, start_point, z_placement):
+        # Inception of coordination system - related to wall
+        axis_placement_wall = self.ifc_file.create_entity(
+            "IfcAxis2Placement3D",
+            Location=self.ifc_file.create_entity("IfcCartesianPoint", Coordinates=(0.0, 0.0, z_placement)),
+            Axis=None,
+            RefDirection=None
+        )
+
+        wall_placement = self.ifc_file.create_entity(
+            "IfcLocalPlacement",
+            RelativePlacement=axis_placement_wall
+        )
+        return wall_placement
+
+    def wall_axis_placement(self, start_point=(0.0, 0.0), end_point=(5.0, 0.0)):
+        # Convert points to IfcCartesianPoint instances
+        start_cartesian_point = self.ifc_file.create_entity("IfcCartesianPoint", Coordinates=start_point)
+        end_cartesian_point = self.ifc_file.create_entity("IfcCartesianPoint", Coordinates=end_point)
+
+        # Create an IfcPolyline with the points
+        wall_axis_polyline = self.ifc_file.create_entity(
+            "IfcPolyline",
+            Points=[start_cartesian_point, end_cartesian_point]
+        )
+        return wall_axis_polyline
+
+    def wall_axis_representation(self, wall_axis_polyline):
+        # Create an IfcShapeRepresentation for the wall
+        wall_axis_representation = self.ifc_file.create_entity(
+            "IfcShapeRepresentation",
+            ContextOfItems=self.geom_rep_sub_context_walls,  # Replace with the appropriate context
+            RepresentationIdentifier="Axis",
+            RepresentationType="Curve2D",  # Use "Curve" as per your desired output
+            Items=[wall_axis_polyline],  # Replace with the appropriate geometry items for the wall = IfcPolyline
+        )
+        return wall_axis_representation
+
+    def wall_swept_solid_representation(self, start_point, end_point, wall_height, wall_thickness):
+        # Create an IfcCartesianPoint for the reference point of the rectangle (center or any other point)
+        rectangle_reference_point = self.ifc_file.create_entity("IfcCartesianPoint",
+                                                                Coordinates=((start_point[0] + end_point[0]) / 2, (start_point[1] + end_point[1]) / 2)
+                                                                )
+
+        # Create an IfcAxis2Placement2D using the center point
+        dx = end_point[0] - start_point[0]
+        dy = end_point[1] - start_point[1]
+        magnitude = math.sqrt(dx ** 2 + dy ** 2)
+        direction_x = float(dx/magnitude)
+        direction_y = float(dy/magnitude)
+        axis_placement_2d = self.ifc_file.create_entity(
+            "IfcAxis2Placement2D",
+            Location=rectangle_reference_point,
+            RefDirection=self.ifc_file.createIfcDirection((direction_x, direction_y))
+        )
+
+        # Create an IfcRectangleProfileDef with the specified attributes
+        rectangle_profile = self.ifc_file.create_entity(
+            "IfcRectangleProfileDef",
+            ProfileType='AREA',
+            ProfileName='Wall Perim',
+            Position=axis_placement_2d,
+            XDim=math.sqrt((end_point[0] - start_point[0]) ** 2 + (end_point[1] - start_point[1]) ** 2),
+            YDim=wall_thickness,  # Replace with the actual Y dimension
+        )
+
+        # Create an IfcExtrudedAreaSolid
+        wall_extruded_area = self.ifc_file.create_entity(
+            "IfcExtrudedAreaSolid",
+            SweptArea=rectangle_profile,
+            Position=None,
+            ExtrudedDirection=self.ifc_file.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0)),  # direction of extrusion
+            Depth=wall_height,  # Replace with the actual wall height
+        )
+
+        # Create an IfcShapeRepresentation for the wall
+        wall_area_representation = self.ifc_file.create_entity(
+            "IfcShapeRepresentation",
+            ContextOfItems=self.geom_rep_sub_context_walls,  # Replace with the appropriate context
+            RepresentationIdentifier='Body',
+            RepresentationType='SweptSolid',
+            Items=[wall_extruded_area],  # Replace with the appropriate geometry items for the wall
+        )
+        return rectangle_profile, wall_extruded_area, wall_area_representation
+
+    def product_definition_shape(self, wall_axis_representation=None, wall_area_representation=None):
+        product_definition_shape = self.ifc_file.create_entity(
+            "IfcProductDefinitionShape",
+            Representations=[wall_axis_representation, wall_area_representation[2]]
+        )
+        return product_definition_shape
+
+    def create_wall(self, wall_placement, product_definition_shape):
+        ifc_wall = self.ifc_file.create_entity(
+            "IfcWall",
+            GlobalId=ifcopenshell.guid.new(),
+            OwnerHistory=self.owner_history,  # Replace with your IfcOwnerHistory entity or None
+            Name="Wall Name",  # Replace with your wall's name or None
+            Description="Wall Description",  # Replace with your wall's description or None
+            ObjectType="Wall",
+            ObjectPlacement=wall_placement,  # Replace with your IfcLocalPlacement or IfcGridPlacement entity or None
+            Representation=product_definition_shape,  # Replace with your IfcProductDefinitionShape entity or None
+            Tag="Wall Tag",  # Replace with your wall's tag or None
+            PredefinedType="STANDARD"  # Replace with your wall's predefined type or None
+        )
+        return ifc_wall
+
+    def create_wall_type(self, ifc_wall, wall_thickness=0.3):
+        wall_thickness = wall_thickness * 1000
+        wall_type = self.ifc_file.create_entity(
+            "IfcWallType",
+            GlobalId=ifcopenshell.guid.new(),
+            OwnerHistory=self.owner_history,
+            Name="Concrete 300",
+            Description="Wall Load-bearing Concrete - thickness %d mm" % wall_thickness,
+            ApplicableOccurrence=None,
+            HasPropertySets=None,
+            RepresentationMaps=None,  # Replace with your representation maps
+            Tag="Wall Type Tag",  # Replace with your wall type's tag
+            ElementType="Wall Type",  # A descriptive name for the element type
+            PredefinedType="STANDARD"  # Replace with your wall type's predefined type
+        )
+
+        # Create the IfcRelDefinesByType relationship
+        rel_defines_by_type = self.ifc_file.create_entity(
+            "IfcRelDefinesByType",
+            GlobalId=ifcopenshell.guid.new(),
+            OwnerHistory=self.owner_history,
+            Name=None,
+            Description="Relation between Wall and WallType",
+            RelatedObjects=[ifc_wall],
+            RelatingType=wall_type,
+        )
+
+        rel_declares = self.ifc_file.create_entity(
+            "IfcRelDeclares",
+            GlobalId=ifcopenshell.guid.new(),
+            OwnerHistory=self.owner_history,
+            Name=None,
+            Description=None,
+            RelatingContext=self.project,
+            RelatedDefinitions=[wall_type],
+        )
+        return wall_type, rel_defines_by_type, rel_declares
 
     def write(self):
         self.ifc_file.write(self.output_file)

@@ -1,8 +1,5 @@
 import pye57
 import pandas as pd
-import random
-import numpy as np
-import matplotlib.pyplot as plt
 import open3d as o3d
 import alphashape
 from matplotlib.patches import Polygon
@@ -11,6 +8,12 @@ import time
 from datetime import datetime
 from tqdm import tqdm
 import os
+import numpy as np
+import matplotlib.pyplot as plt
+from skimage.morphology import closing, square
+import cv2
+import random
+import math
 
 
 def log(message, last_time, filename):
@@ -104,57 +107,6 @@ def load_xyz_file(file_name, plot_xyz=False):
     return xyz, rgb
 
 
-def ransac_plane(xyz, threshold=0.04, iterations=1000):
-    print('Running RANSAC segmentation of planes')
-    inliers, equation = [], []
-    n_points = len(xyz)
-    i = 1
-    percent_limit = 10
-    while i < iterations:
-        percent_done = int(i / iterations * 100)
-        if percent_done >= percent_limit:
-            print('Progress: %d %%' % int(percent_done))
-            percent_limit += 10
-        idx_samples = random.sample(range(n_points), 3)
-        # idx = random.sample(range(n_points), 1)
-        # idx_samples = [idx[0], idx[0] + 1, idx[0] + 2]
-        pts = xyz[idx_samples]
-        vec1 = pts[1] - pts[0]
-        vec2 = pts[2] - pts[0]
-        normal = np.cross(vec1, vec2)
-        a, b, c = normal / np.linalg.norm(normal)
-        d = -np.sum(normal * pts[1])
-        distance = (a * xyz[:, 0] + b * xyz[:, 1] + c * xyz[:, 2] + d) / np.sqrt(a ** 2 + b ** 2 + c ** 2)
-        idx_candidates = np.where(np.abs(distance) <= threshold)[0]
-        if len(idx_candidates) > len(inliers):
-            equation = [a, b, c, d]
-            inliers = idx_candidates
-        i += 1
-    return equation, inliers
-
-
-def ransac_find_horiz_surface_plane(xyz, threshold=0.02, steps=1000):
-    print('Running RANSAC segmentation of horiz_surface planes (x, y = 0, 0)')
-    inliers, equation = [], []
-    i = 0
-    percent_limit = 10
-    z_min, z_max = min(xyz[:, 2]), max(xyz[:, 2])
-    while i < steps:
-        percent_done = int(i / steps * 100)
-        if percent_done >= percent_limit:
-            print('Progress: %d %%' % int(percent_done))
-            percent_limit += 10
-        a, b, c = 0, 0, 1
-        d = z_min + steps * (z_max - z_min)
-        distance = (a * xyz[:, 0] + b * xyz[:, 1] + c * xyz[:, 2] + d) / np.sqrt(a ** 2 + b ** 2 + c ** 2)
-        idx_candidates = np.where(np.abs(distance) <= threshold)[0]
-        if len(idx_candidates) > len(inliers):
-            equation = [a, b, c, d]
-            inliers = idx_candidates
-        i += 1
-    return equation, inliers
-
-
 def create_hull_alphashape(points_3d, concavity_level=1.0):
     points_2d = [[x, y] for x, y, _ in points_3d]
     alpha_shape = alphashape.alphashape(points_2d, concavity_level)
@@ -167,7 +119,6 @@ def create_hull_alphashape(points_3d, concavity_level=1.0):
 
 
 def identify_slabs_from_point_cloud(points_xyz, points_rgb, z_step, plot_segmented_plane=False):
-
     # ransac_threshold = 0.2  # threshold for ransac identification of points corresponding to a plane (inliers)
     # n_iterations = 1000  # number of iterations when identifying inliers
 
@@ -248,4 +199,405 @@ def identify_slabs_from_point_cloud(points_xyz, points_rgb, z_step, plot_segment
             pcd.append(o3d.io.read_point_cloud('output_xyz/horiz_surface_%d.xyz' % (i + 1), format='xyz'))
         o3d.visualization.draw_geometries(pcd)
 
-    return slabs
+    return slabs, horiz_surface_planes
+
+
+def split_pointcloud_to_storeys(points_xyz, slabs):
+    segmented_pointclouds_3d = []
+
+    # Iterate through the slabs and get the regions between consecutive slabs
+    for i in range(len(slabs) - 1):
+        bottom_z_of_upper_slab = slabs[i + 1]['slab_bottom_z_coord'] + 0.1  # upper limit (wall + 10 cm of the ceiling slab)
+        top_z_of_bottom_slab = slabs[i]['slab_bottom_z_coord'] + slabs[i]['thickness'] - 0.1  # bottom limit (- 10 cm of the floor)
+
+        # Extract points that are between the bottom of the upper slab and the top of the lower slab
+        segmented_pointcloud_idx = np.where((top_z_of_bottom_slab < points_xyz[:, 2]) &
+                                        (points_xyz[:, 2] < bottom_z_of_upper_slab))[0]
+
+        if len(segmented_pointcloud_idx) > 0:
+            segmented_pointcloud_points_in_storey = points_xyz[segmented_pointcloud_idx]
+            segmented_pointclouds_3d.append(segmented_pointcloud_points_in_storey)
+
+    return segmented_pointclouds_3d
+
+
+def visualize_points_in_xy_plane(vertical_surfaces):
+    plt.figure(figsize=(10, 6))  # You can adjust the figure size as needed
+
+    for storey, points_list in vertical_surfaces.items():
+        for points in points_list:
+            points = np.array(points)
+            x = points[:, 0]
+            y = points[:, 1]
+            plt.scatter(x, y, label=storey, s=2)
+
+    plt.xlabel('X')
+    plt.ylabel('Y')
+    plt.title('Visualization of Points in the x-y Plane')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+
+def merge_horizontal_pointclouds_in_storey(horiz_surface_planes):
+    for i in range(1, len(horiz_surface_planes)-1):
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+        ax.scatter(np.concatenate((horiz_surface_planes[i][:, 0], horiz_surface_planes[i+1][:, 0])),
+                   np.concatenate((horiz_surface_planes[i][:, 1], horiz_surface_planes[i+1][:, 1])), s=0.02)
+
+        ax.set_aspect('equal', 'box')
+        fig.tight_layout()
+        plt.savefig('images/joint_surface_%d.jpg' % (i + 1), dpi=200)
+        plt.close(fig)
+
+
+def save_coordinates_to_xyz(coordinates_list, base_filename):
+    for i, coordinates in enumerate(coordinates_list):
+        x_coordinates = coordinates[:, 0]
+        y_coordinates = coordinates[:, 1]
+        z_coordinates = coordinates[:, 2]
+
+    # Construct the filename with a numerical suffix
+    filename = f'{base_filename}_{i}.xyz'
+
+    # Combine X, Y, and Z coordinates and save to the XYZ file
+    combined_coordinates = np.column_stack((x_coordinates, y_coordinates, z_coordinates))
+    np.savetxt(filename, combined_coordinates, delimiter=' ', fmt='%.4f')
+
+
+# Functions used for identification of walls
+# Define a function to get line segments from a contour using Douglas-Peucker algorithm
+def get_line_segments(contour, epsilon_factor=0.01):
+    epsilon = epsilon_factor * cv2.arcLength(contour, True)
+    approx = cv2.approxPolyDP(contour, epsilon, True)
+    segments = []
+    for i in range(len(approx)):
+        segment = [tuple(approx[i - 1][0]), tuple(approx[i][0])]
+        segments.append(segment)
+    return segments
+
+
+def random_color():
+    """Generate a random color."""
+    return (random.random(), random.random(), random.random())
+
+
+def distance_point_to_line(point, line_start, line_end):
+    """Calculate the distance from a point to a line defined by two points."""
+    numerator = abs((line_end[1] - line_start[1]) * point[0] -
+                    (line_end[0] - line_start[0]) * point[1] + line_end[0] * line_start[1] -
+                    line_end[1] * line_start[0])
+    denominator = ((line_end[1] - line_start[1]) ** 2 + (line_end[0] - line_start[0]) ** 2) ** 0.5
+    return numerator / denominator
+
+
+def distance_between_points(point1, point2):
+    """Calculate the Euclidean distance between two points."""
+    return ((point1[0] - point2[0]) ** 2 + (point1[1] - point2[1]) ** 2) ** 0.5
+
+
+def merge_segments(seg1, seg2):
+    """Merge two segments into one."""
+    points = seg1 + seg2
+    sorted_points = sorted(points, key=lambda p: (p[0], p[1]))
+    return [sorted_points[0], sorted_points[-1]]
+
+
+def segments_within_tolerance_for_merge_corrected(seg1, seg2, max_thickness, max_distance):
+    """Check if two segments are candidates for merging."""
+    # Check if the segments are close enough to merge based on maximum wall thickness
+    close_enough = any(
+        distance_between_points(p1, p2) <= max_distance for p1 in seg1 for p2 in seg2
+    )
+
+    # Check if the segments are co-linear
+    colinear = all(
+        distance_point_to_line(point, seg1[0], seg1[1]) < max_thickness for point in seg2
+    )
+
+    return close_enough and colinear
+
+
+def merge_colinear_segments_updated(segments, max_thickness, max_distance):
+    """Merge co-linear segments from the given list using the direct approach we tested."""
+    final_segments = []
+
+    while segments:
+        base_segment = segments[0]
+        to_merge = [base_segment]
+
+        for other_segment in segments[1:]:
+            if segments_within_tolerance_for_merge_corrected(base_segment, other_segment, max_thickness, max_distance):
+                to_merge.append(other_segment)
+
+        # Merge all the segments in to_merge into a single segment
+        all_points = [point for seg in to_merge for point in seg]
+        sorted_points = sorted(all_points, key=lambda p: (p[0], p[1]))
+        merged_segment = [sorted_points[0], sorted_points[-1]]
+        final_segments.append(merged_segment)
+
+        # Remove segments that have been merged
+        for seg in to_merge:
+            segments.remove(seg)
+
+    return final_segments
+
+
+def angle_between_segments(seg1, seg2):
+    """Calculate the angle (in degrees) between two segments."""
+    dx1 = seg1[1][0] - seg1[0][0]
+    dy1 = seg1[1][1] - seg1[0][1]
+    dx2 = seg2[1][0] - seg2[0][0]
+    dy2 = seg2[1][1] - seg2[0][1]
+
+    dot_product = dx1 * dx2 + dy1 * dy2
+    magnitude1 = (dx1 ** 2 + dy1 ** 2) ** 0.5
+    magnitude2 = (dx2 ** 2 + dy2 ** 2) ** 0.5
+
+    if magnitude1 * magnitude2 == 0:
+        return 90  # Perpendicular
+
+    cosine_angle = dot_product / (magnitude1 * magnitude2)
+    angle_rad = math.acos(min(1, max(-1, cosine_angle)))  # Clip to avoid out of domain error
+    angle_deg = math.degrees(angle_rad)
+
+    return angle_deg
+
+
+def segments_are_parallel(seg1, seg2, angle_tolerance=1):
+    """Check if two segments are approximately parallel within a given angle tolerance (in degrees)."""
+    angle = angle_between_segments(seg1, seg2)
+    return abs(angle) < angle_tolerance or abs(angle - 180) < angle_tolerance
+
+
+def perpendicular_distance_between_segments(seg1, seg2):
+    """Calculate the shortest perpendicular distance between two parallel segments."""
+    if segments_are_parallel(seg1, seg2):
+        return distance_point_to_line(seg2[0], seg1[0], seg1[1])
+    else:
+        return float('inf')
+
+
+def group_parallel_segments(segments, min_wall_thickness, max_wall_thickness, angle_tolerance=1):
+    """Group segments that are parallel with a small tolerance."""
+    grouped = []
+
+    while segments:
+        current_segment = segments.pop(0)
+        parallel_group = [current_segment]
+
+        i = 0
+        while i < len(segments):
+            segment = segments[i]
+            if segments_are_parallel(current_segment, segment, angle_tolerance):
+                min_distance = min(perpendicular_distance_between_segments(current_segment, segment),
+                                   perpendicular_distance_between_segments(segment, current_segment))
+                if min_wall_thickness < min_distance < max_wall_thickness:
+                    parallel_group.append(segment)
+                    segments.pop(i)
+                else:
+                    i += 1
+            else:
+                i += 1
+
+        # Save only the groups consisting of two or more segments
+        if len(parallel_group) >= 2:
+            grouped.append(parallel_group)
+
+    return grouped
+
+
+def calculate_wall_axis(group):
+    """Calculate the axis for a group of parallel segments."""
+    if len(group) < 2:
+        return None
+
+    # Find the longer segment in the group
+    lengths = [distance_between_points(seg[0], seg[1]) for seg in group]
+    longer_segment = group[np.argmax(lengths)]
+    shorter_segment = group[1 - np.argmax(lengths)]
+
+    # Calculate the direction of the axis based on the longer segment
+    direction = [longer_segment[1][0] - longer_segment[0][0], longer_segment[1][1] - longer_segment[0][1]]
+    norm = (direction[0] ** 2 + direction[1] ** 2) ** 0.5
+    direction = [direction[0] / norm, direction[1] / norm]
+
+    # Calculate the mean distance between the two segments
+    mean_distance = np.mean([perpendicular_distance_between_segments(longer_segment, shorter_segment),
+                             perpendicular_distance_between_segments(shorter_segment, longer_segment)])
+    half_mean_distance = mean_distance / 2
+
+    # Calculate the start and end of the axis (initial position)
+    axis_start = [longer_segment[0][0] - half_mean_distance * direction[1],
+                  longer_segment[0][1] + half_mean_distance * direction[0]]
+    axis_end = [longer_segment[1][0] - half_mean_distance * direction[1],
+                longer_segment[1][1] + half_mean_distance * direction[0]]
+
+    # Calculate sum of distances for initial position
+    distance_sum_initial = sum([distance_between_points(pt, axis_start) + distance_between_points(pt, axis_end)
+                                for pt in longer_segment + shorter_segment])
+
+    # Flip the axis to the other side of the longer segment
+    axis_start_flipped = [longer_segment[0][0] + half_mean_distance * direction[1],
+                          longer_segment[0][1] - half_mean_distance * direction[0]]
+    axis_end_flipped = [longer_segment[1][0] + half_mean_distance * direction[1],
+                        longer_segment[1][1] - half_mean_distance * direction[0]]
+
+    # Calculate sum of distances for flipped position
+    distance_sum_flipped = sum([distance_between_points(pt, axis_start_flipped) + distance_between_points(pt, axis_end_flipped)
+                                for pt in longer_segment + shorter_segment])
+
+    # Choose the position that gives a smaller sum
+    if distance_sum_flipped < distance_sum_initial:
+        axis_start, axis_end = axis_start_flipped, axis_end_flipped
+
+    return [axis_start, axis_end], mean_distance
+
+
+def line_intersection(line1, line2):
+    """Find the intersection point of two lines (if it exists)."""
+    xdiff = (line1[0][0] - line1[1][0], line2[0][0] - line2[1][0])
+    ydiff = (line1[0][1] - line1[1][1], line2[0][1] - line2[1][1])
+
+    def det(a, b):
+        return a[0] * b[1] - a[1] * b[0]
+
+    div = det(xdiff, ydiff)
+    if div == 0:
+        return None  # Lines don't intersect
+
+    d = (det(*line1), det(*line2))
+    x = det(d, xdiff) / div
+    y = det(d, ydiff) / div
+    return x, y
+
+
+def adjust_wall_axes_for_intersections(wall_axes, max_wall_thickness):
+    """Adjust wall axes to account for intersections."""
+    half_max_thickness = max_wall_thickness / 2
+
+    for i, axis1 in enumerate(wall_axes):
+        for j, axis2 in enumerate(wall_axes):
+            if i == j:
+                continue  # Don't compare the segment with itself
+
+            intersection = line_intersection(axis1, axis2)
+            if intersection:
+                # Check the distance from the intersection to each endpoint of the axes
+                for k in range(2):  # Check both endpoints for each axis
+                    if distance_between_points(axis1[k], intersection) <= half_max_thickness:
+                        axis1[k] = list(intersection)
+                    if distance_between_points(axis2[k], intersection) <= half_max_thickness:
+                        axis2[k] = list(intersection)
+
+    return wall_axes
+
+
+def plot_parallel_groups(groups, wall_axes, binary_image, points_2d, x_min, x_max, y_min, y_max, storey):
+    fig = plt.figure(figsize=(10, 8))
+
+    # Plot the binary image
+    plt.imshow(binary_image, cmap='gray', origin='lower', extent=[x_min, x_max, y_min, y_max], alpha=0.6)
+
+    # Scatter plot of points_2d
+    plt.scatter(points_2d[:, 0], points_2d[:, 1], color='green', alpha=0.2, s=1)  # alpha for transparency
+
+    # Plot each group with a unique color
+    for idx, group in enumerate(groups):
+        color = random_color()
+        for segment in group:
+            x_values = [segment[0][0], segment[1][0]]
+            y_values = [segment[0][1], segment[1][1]]
+            plt.plot(x_values, y_values, color=color, linewidth=2)
+
+        # Plot the corresponding wall axis
+        axis = wall_axes[idx]
+        if axis:
+            plt.plot([axis[0][0], axis[1][0]], [axis[0][1], axis[1][1]], color=color, linestyle='--', linewidth=1.5)
+
+    plt.xlabel('x-coordinate (m)')
+    plt.ylabel('y-coordinate (m)')
+    plt.title("Identified walls and their axes")
+    ax = fig.gca()
+    ax.set_aspect('equal', 'box')
+    fig.tight_layout()
+    plt.savefig('images/walls_in_storey_%d.jpg' % (storey + 1), dpi=200)
+    plt.close(fig)
+
+
+def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minimum_wall_thickness, maximum_wall_thickness, storey):
+    x_coords, y_coords, z_coords = zip(*pointcloud)
+    z_section_boundaries = [0.9, 1.0]  # percentage of the height for the storey sections
+    grid_coefficient = 5  # computational grid size (multiplies the point_cloud_resolution)
+
+    # Calculate z-coordinate limits
+    z_max_in_point_cloud = np.max(z_coords)
+    z_min_in_point_cloud = np.min(z_coords)
+    z_max = z_min_in_point_cloud + z_section_boundaries[1] * (z_max_in_point_cloud - z_min_in_point_cloud)
+    z_min = z_min_in_point_cloud + z_section_boundaries[0] * (z_max_in_point_cloud - z_min_in_point_cloud)
+
+    # Filter points based on z-coordinate limits
+    filtered_indices = [i for i, z in enumerate(z_coords) if z_min <= z <= z_max]
+    points_2d = np.array([(x_coords[i], y_coords[i]) for i in filtered_indices])
+
+    # Compute 2D histogram from the 2D point cloud
+    print("Computing 2D histogram from the 2D point cloud")
+    pixel_size = pointcloud_resolution * grid_coefficient
+    x_min, y_min = np.min(points_2d, axis=0)
+    x_max, y_max = np.max(points_2d, axis=0)
+    x_values_full = np.arange(x_min + 0.5 * pixel_size, x_max, pixel_size)
+    y_values_full = np.arange(y_min + 0.5 * pixel_size, y_max, pixel_size)
+    grid_full, _, _ = np.histogram2d(points_2d[:, 0], points_2d[:, 1], bins=[x_values_full, y_values_full])
+    grid_full = grid_full.T
+
+    # Convert the 2D histogram to binary (mask) based on a threshold
+    threshold = 0.01
+    print("Converting the 2D histogram to binary (mask) based on a threshold")
+    binary_image = (grid_full > threshold).astype(np.uint8) * 255
+
+    # Pre-process the binary image
+    print("Pre-processing the binary image")
+    binary_image = closing(binary_image, square(5))  # closes small holes in the binary mask
+
+    # Find contours in the binary image
+    print("Finding contours in the binary image")
+    # contours, _ = cv2.findContours(binary_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(binary_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+
+    # Extract all segments from contours
+    print("Extracting all segments from contours")
+    all_segments = []
+    for contour in contours:
+        all_segments.extend(get_line_segments(contour))
+
+    # Convert pixel-based segment coordinates to real-world coordinates
+    print("Converting pixel-based segment coordinates to real-world coordinates")
+    segments_in_world_coords = [[[x[0] * pixel_size + x_min, x[1] * pixel_size + y_min] for x in segment] for segment in
+                                all_segments]
+
+    # Filter out segments shorter than the given threshold
+    print("Filtering out segments shorter than the given threshold")
+    filtered_segments = [
+        segment for segment in segments_in_world_coords
+        if distance_between_points(segment[0], segment[1]) >= minimum_wall_length
+    ]
+
+    # Merge the co-linear segments using the updated function
+    print("Merging the co-linear segments using the updated function")
+    final_wall_segments = merge_colinear_segments_updated(filtered_segments.copy(), minimum_wall_thickness,
+                                                          maximum_wall_thickness)
+    # Group parallel segments
+    print("Grouping parallel segments")
+    parallel_groups = group_parallel_segments(final_wall_segments, minimum_wall_thickness, maximum_wall_thickness)
+    wall_axes, wall_thicknesses = [], []
+    for group in parallel_groups:
+        wall_axis, wall_thickness = calculate_wall_axis(group)
+        wall_axes.append(wall_axis)
+        wall_thicknesses.append(wall_thickness)
+    wall_axes = adjust_wall_axes_for_intersections(wall_axes, maximum_wall_thickness)
+    plot_parallel_groups(parallel_groups, wall_axes, binary_image, points_2d, x_min, x_max, y_min, y_max, storey)
+
+    start_points, end_points = zip(*wall_axes)
+    wall_materials = ['Concrete'] * len(parallel_groups)
+    return start_points, end_points, wall_thicknesses, wall_materials

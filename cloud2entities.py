@@ -1,14 +1,20 @@
 from aux_functions import *
 from generate_ifc import IFCmodel
 
+
 # input point clouds
 e57_input = False  # if True, only one xyz_file is created (e57 files are merged)
 # e57_file_names = ["input_e57/test_room.e57"]
 # e57_file_names = ['input_e57/05th.e57', "input_e57/06th.e57", "input_e57/07th.e57"]
 e57_file_names = ["input_e57/06th.e57", "input_e57/07th.e57"]
 
-xyz_filenames = ['input_xyz/test_room_3.xyz']
+xyz_filenames = ['input_xyz/Test_room_merged_subsampled.xyz']
 
+# input parameters for identification of elements
+pointcloud_resolution = 0.002
+minimum_wall_length = 0.2
+minimum_wall_thickness = 0.05
+maximum_wall_thickness = 0.6
 
 # IFC model parameters
 ifc_output_file = 'output_IFC/output-2.ifc'
@@ -55,8 +61,22 @@ points_xyz = np.round(points_xyz, 3)  # round the xyz coordinates to 3 decimals
 last_time = log('All point cloud data imported.', last_time, log_filename)
 
 # scan the model along the z-coordinate and search for planes parallel to xy-plane
-z_step = 0.10
-slabs = identify_slabs_from_point_cloud(points_xyz, points_rgb, z_step, plot_segmented_plane=False)
+slabs, horizontal_surface_planes = identify_slabs_from_point_cloud(points_xyz, points_rgb, z_step=0.1, plot_segmented_plane=False)
+
+# merge_horizontal_pointclouds_in_storey(horizontal_surface_planes)
+pointcloud_storeys = split_pointcloud_to_storeys(points_xyz, slabs)
+walls = []
+id = 0
+for i, storey_pointcloud in enumerate(pointcloud_storeys):
+    start_points, end_points, wall_thicknesses, wall_materials = identify_walls(storey_pointcloud, pointcloud_resolution, minimum_wall_length,
+                                                                                minimum_wall_thickness, maximum_wall_thickness, i)
+    z_placement = slabs[i]['slab_bottom_z_coord'] + slabs[i]['thickness']
+    wall_height = slabs[i+1]['slab_bottom_z_coord'] - z_placement
+    for j in range(len(start_points)):
+        id += 1
+        walls.append({'id': id, 'storey': i+1, 'start_point': start_points[j], 'end_point': end_points[j],
+                      'thickness': wall_thicknesses[j], 'material': wall_materials[j], 'z_placement': z_placement,
+                      'height': wall_height})
 
 # generate IFC model
 ifc_model = IFCmodel(ifc_project_name, ifc_output_file)
@@ -84,6 +104,58 @@ for idx, slab in enumerate(slabs):
 
     # assign the slab to a storey and save them to the IFC model
     ifc_model.assign_product_to_storey(slabs_ifc[-1], storeys_ifc[-1])
+
+# Wall definitition for IFC
+for wall in walls:
+    start_point = tuple(float(num) for num in wall['start_point'])
+    end_point = tuple(float(num) for num in wall['end_point'])
+    wall_thickness = wall['thickness']
+    wall_material = wall['material']
+    wall_z_placement = wall['z_placement']
+    wall_heights = wall['height']
+
+    # Create a material layer
+    material_layer = ifc_model.create_material_layer(wall_thickness, wall_material)
+    # Create an IfcMaterialLayerSet using the material layer (in a list)
+    material_layer_set = ifc_model.create_material_layer_set([material_layer])
+    # Create an IfcMaterialLayerSetUsage and associate it with the element or product
+    material_layer_set_usage = ifc_model.create_material_layer_set_usage(material_layer_set, wall_thickness)
+    # Local placement
+    wall_placement = ifc_model.wall_placement(start_point, float(wall_z_placement))
+    wall_axis_placement = ifc_model.wall_axis_placement(start_point, end_point)
+    wall_axis_representation = ifc_model.wall_axis_representation(wall_axis_placement)
+    wall_swept_solid_representation = ifc_model.wall_swept_solid_representation(start_point, end_point, wall_heights, wall_thickness)
+    product_definition_shape = ifc_model.product_definition_shape(wall_axis_representation, wall_swept_solid_representation)
+    wall = ifc_model.create_wall(wall_placement, product_definition_shape)
+    assign_material = ifc_model.assign_material(wall, material_layer_set_usage)
+    wall_type = ifc_model.create_wall_type(wall, wall_thickness)
+    assign_material_2 = ifc_model.assign_material(wall_type[0], material_layer_set)
+    assign_object = ifc_model.assign_product_to_storey(wall, storeys_ifc[0])
+
+"""start_point = (-92.64, -34.203)
+end_point = (7.5, 5.5)
+wall_thickness = 0.3
+wall_material = "Concrete"
+wall_z_placement = 50.3
+wall_heights = 2.8
+
+# Create a material layer
+material_layer = ifc_model.create_material_layer(wall_thickness, wall_material)
+# Create an IfcMaterialLayerSet using the material layer (in a list)
+material_layer_set = ifc_model.create_material_layer_set([material_layer],wall_thickness)
+# Create an IfcMaterialLayerSetUsage and associate it with the element or product
+material_layer_set_usage = ifc_model.create_material_layer_set_usage(material_layer_set, wall_thickness)
+# Local placement
+wall_placement = ifc_model.wall_placement(start_point, float(wall_z_placement))
+wall_axis_placement = ifc_model.wall_axis_placement(start_point, end_point)
+wall_axis_representation = ifc_model.wall_axis_representation(wall_axis_placement)
+wall_swept_solid_representation = ifc_model.wall_swept_solid_representation(start_point, end_point, wall_heights, wall_thickness)
+product_definition_shape = ifc_model.product_definition_shape(wall_axis_representation, wall_swept_solid_representation)
+wall = ifc_model.create_wall(wall_placement, product_definition_shape)
+assign_material = ifc_model.assign_material(wall, material_layer_set_usage)
+wall_type = ifc_model.create_wall_type(wall, wall_thickness)
+assign_material_2 = ifc_model.assign_material(wall_type[0], material_layer_set)
+assign_object = ifc_model.assign_product_to_storey(wall, storeys_ifc[0])"""
 
 # Write the IFC model to a file
 ifc_model.write()
