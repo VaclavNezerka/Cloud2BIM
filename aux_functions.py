@@ -14,6 +14,7 @@ from skimage.morphology import closing, square
 import cv2
 import random
 import math
+from scipy.signal import find_peaks
 
 
 def log(message, last_time, filename):
@@ -32,23 +33,6 @@ def read_e57(file_name):
     e57 = pye57.E57(file_name)
     data_raw = e57.read_scan_raw(0)
     return data_raw
-
-
-'''
-def e57_data_to_xyz(e57_data_array, output_file_name):
-    x, y, z, red, green, blue, intensity = [], [], [], [], [], [], []
-    for e57_data in e57_data_array:
-        x.extend(e57_data['cartesianX'])
-        y.extend(e57_data['cartesianY'])
-        z.extend(e57_data['cartesianZ'])
-        red.extend(e57_data['colorRed'])
-        green.extend(e57_data['colorGreen'])
-        blue.extend(e57_data['colorBlue'])
-        intensity.extend(e57_data['intensity'])
-
-    df = pd.DataFrame({'X': x, 'Y': y, 'Z': z, 'R': red, 'G': green, 'B': blue, 'Intensity': intensity})
-    df.to_csv(output_file_name, sep='\t', index=False)
-'''
 
 
 def e57_data_to_xyz(e57_data_array, output_file_name, chunk_size=10000):
@@ -90,8 +74,6 @@ def save_xyz(points, output_file_name):
 
 
 def load_xyz_file(file_name, plot_xyz=False):
-    # df = pd.read_csv(file_name, delim_whitespace=True, header=0)
-    # print(df.dtypes)
     pcd = np.loadtxt(file_name, skiprows=1)
     xyz = pcd[:, :3]
     rgb = pcd[:, 3:6]
@@ -119,9 +101,6 @@ def create_hull_alphashape(points_3d, concavity_level=1.0):
 
 
 def identify_slabs_from_point_cloud(points_xyz, points_rgb, z_step, plot_segmented_plane=False):
-    # ransac_threshold = 0.2  # threshold for ransac identification of points corresponding to a plane (inliers)
-    # n_iterations = 1000  # number of iterations when identifying inliers
-
     z_min, z_max = min(points_xyz[:, 2]), max(points_xyz[:, 2])
     n_steps = int((z_max - z_min) / z_step + 1)
     z_array, n_points_array = [], []
@@ -151,8 +130,6 @@ def identify_slabs_from_point_cloud(points_xyz, points_rgb, z_step, plot_segment
             (points_xyz[:, 2] < horiz_surface_candidates[i][1]))[0]
         horiz_surface_planes.append(points_xyz[horiz_surface_idx])
         horiz_surface_colors.append(points_rgb[horiz_surface_idx] / 255)
-    # eq, idx_inliers = ransac_plane(single_horiz_surface_selected, threshold=ransac_threshold, iterations=n_iterations)
-    # inliers = points_xyz[idx_inliers]
 
     # merge lower and upper surface of each horiz_surface and create a hull
     slabs = []
@@ -212,44 +189,13 @@ def split_pointcloud_to_storeys(points_xyz, slabs):
 
         # Extract points that are between the bottom of the upper slab and the top of the lower slab
         segmented_pointcloud_idx = np.where((top_z_of_bottom_slab < points_xyz[:, 2]) &
-                                        (points_xyz[:, 2] < bottom_z_of_upper_slab))[0]
+                                            (points_xyz[:, 2] < bottom_z_of_upper_slab))[0]
 
         if len(segmented_pointcloud_idx) > 0:
             segmented_pointcloud_points_in_storey = points_xyz[segmented_pointcloud_idx]
             segmented_pointclouds_3d.append(segmented_pointcloud_points_in_storey)
 
     return segmented_pointclouds_3d
-
-
-def visualize_points_in_xy_plane(vertical_surfaces):
-    plt.figure(figsize=(10, 6))  # You can adjust the figure size as needed
-
-    for storey, points_list in vertical_surfaces.items():
-        for points in points_list:
-            points = np.array(points)
-            x = points[:, 0]
-            y = points[:, 1]
-            plt.scatter(x, y, label=storey, s=2)
-
-    plt.xlabel('X')
-    plt.ylabel('Y')
-    plt.title('Visualization of Points in the x-y Plane')
-    plt.legend()
-    plt.grid(True)
-    plt.show()
-
-
-def merge_horizontal_pointclouds_in_storey(horiz_surface_planes):
-    for i in range(1, len(horiz_surface_planes)-1):
-        fig = plt.figure()
-        ax = fig.add_subplot(111)
-        ax.scatter(np.concatenate((horiz_surface_planes[i][:, 0], horiz_surface_planes[i+1][:, 0])),
-                   np.concatenate((horiz_surface_planes[i][:, 1], horiz_surface_planes[i+1][:, 1])), s=0.02)
-
-        ax.set_aspect('equal', 'box')
-        fig.tight_layout()
-        plt.savefig('images/joint_surface_%d.jpg' % (i + 1), dpi=200)
-        plt.close(fig)
 
 
 def save_coordinates_to_xyz(coordinates_list, base_filename):
@@ -280,7 +226,7 @@ def get_line_segments(contour, epsilon_factor=0.01):
 
 def random_color():
     """Generate a random color."""
-    return (random.random(), random.random(), random.random())
+    return random.random(), random.random(), random.random()
 
 
 def distance_point_to_line(point, line_start, line_end):
@@ -600,4 +546,380 @@ def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minim
 
     start_points, end_points = zip(*wall_axes)
     wall_materials = ['Concrete'] * len(parallel_groups)
-    return start_points, end_points, wall_thicknesses, wall_materials
+
+    # Calculate direction vectors for each wall axis
+    wall_directions = [(axis[1][0] - axis[0][0], axis[1][1] - axis[0][1]) for axis in wall_axes]
+
+    # Filter out the ceiling and floor points
+    z_floor, z_ceiling = identify_floor_and_ceiling(list(zip(x_coords, y_coords, z_coords)), pointcloud_resolution)
+
+    # Assign points to walls
+    wall_groups, wall_thicknesses = assign_points_to_walls(x_coords, y_coords, z_coords, wall_axes, parallel_groups,
+                                                           z_floor, z_ceiling)
+
+    # Rotate each group of points to the x-z plane
+    rotated_wall_groups, rotated_wall_axes = [], []
+    wall_counter = 0
+    for group, direction in zip(wall_groups, wall_directions):
+        rotated_wall = rotate_points_to_xz_plane(group, direction)
+        wall_axis = [(wall_axes[wall_counter][0][0], wall_axes[wall_counter][0][1], z_floor + z_ceiling / 2),
+                     (wall_axes[wall_counter][1][0], wall_axes[wall_counter][1][1], z_floor + z_ceiling / 2)]
+        rotated_wall_axis = rotate_points_to_xz_plane(wall_axis, direction)
+        rotated_wall_groups.append(rotated_wall)
+        rotated_wall_axes.append(rotated_wall_axis)
+        wall_counter += 1
+
+    filtered_rotated_wall_groups = []
+    for wall_group, wall_thickness in zip(rotated_wall_groups, wall_thicknesses):
+        threshold = 0.5 * wall_thickness + 0.1 * wall_thickness
+        filtered_wall_points = [point for point in wall_group if point[1] <= threshold]
+        filtered_rotated_wall_groups.append(filtered_wall_points)
+
+    # Plot the filtered walls
+    translated_filtered_rotated_wall_groups = []
+    for idx, wall_group in enumerate(filtered_rotated_wall_groups):
+        # Translate the wall to start at the origin
+        rotated_wall_axis = rotated_wall_axes[idx]
+        min_x = min(rotated_wall_axis[0][0], rotated_wall_axis[1][0])
+        min_y = min([point[1] for point in wall_group])
+        min_z = min([point[2] for point in wall_group])
+        translated_wall = [(x - min_x, y - min_y, z - min_z) for x, y, z in wall_group]
+        translated_filtered_rotated_wall_groups.append(translated_wall)
+        # plot_wall(translated_wall, wall_thicknesses[idx], idx+1)
+
+    return start_points, end_points, wall_thicknesses, wall_materials, grid_coefficient, translated_filtered_rotated_wall_groups
+
+
+def identify_floor_and_ceiling(points, point_cloud_resolution, min_distance=10, plot_histograms_for_floors=False):
+    """Identify the z-coordinates of the floor and ceiling surfaces in the wall point cloud."""
+
+    # Extract z-coordinates
+    z_coords = [point[2] for point in points]
+
+    # Generate bin edges based on the specified resolution
+    z_min, z_max = min(z_coords), max(z_coords)
+    bin_edges = np.arange(z_min, z_max, point_cloud_resolution)
+
+    # Create a histogram of z-coordinates
+    hist, _ = np.histogram(z_coords, bins=bin_edges)
+
+    # Set the height threshold to a percentage of the maximum histogram value
+    height_threshold = 0.5 * max(hist)
+
+    # Find peaks in the histogram
+    peaks, properties = find_peaks(hist, distance=min_distance, height=height_threshold,
+                                   prominence=0.25*height_threshold)
+
+    # Check if we have at least 2 peaks
+    if len(peaks) < 2:
+        print("Warning: Unable to identify both floor and ceiling surfaces.")
+        return None, None
+
+    # The lowest peak corresponds to the floor and the highest peak corresponds to the ceiling
+    z_floor = bin_edges[peaks[0]] + point_cloud_resolution
+    z_ceiling = bin_edges[peaks[-1]] - point_cloud_resolution
+
+    # Plotting
+    if plot_histograms_for_floors:
+        plt.figure(figsize=(10, 6))
+        plt.bar(bin_edges[:-1], hist, width=point_cloud_resolution, align='edge')
+        plt.plot(bin_edges[:-1], hist, color='black', lw=1.5)
+        plt.scatter(bin_edges[peaks], hist[peaks], color='red', s=100, zorder=3, label='Detected peaks')
+        plt.axvline(x=z_floor, color='cyan', linestyle='--', label=f'z_floor: {z_floor:.3f}')
+        plt.axvline(x=z_ceiling, color='yellow', linestyle='--', label=f'z_ceiling: {z_ceiling:.3f}')
+        plt.xlabel('z-coordinate (m)')
+        plt.ylabel('Frequency')
+        plt.legend()
+        # plt.title('z-coordinate histogram with floor and ceiling peaks')
+        plt.savefig('images/wall_outputs_images/identified_floor_and_ceiling_surfaces.jpg', dpi=300)
+        plt.savefig('images/wall_outputs_images/identified_floor_and_ceiling_surfaces.pdf')
+        plt.show()
+
+    return z_floor, z_ceiling
+
+
+def identify_wall_faces(wall_number, points, point_cloud_resolution, min_distance=3, plot_histograms_for_walls=False):
+    """Identify the z-coordinates of the floor and ceiling surfaces in the wall point cloud."""
+
+    # Extract z-coordinates
+    y_coords = [point[1] for point in points]
+
+    # Generate bin edges based on the specified resolution
+    y_min, y_max = min(y_coords), max(y_coords)
+    bin_edges = np.arange(y_min, y_max, point_cloud_resolution)
+
+    # Create a histogram of z-coordinates
+    hist, _ = np.histogram(y_coords, bins=bin_edges)
+
+    # Set the height threshold to a percentage of the maximum histogram value
+    height_threshold = 0.5 * max(hist)
+
+    # Find peaks in the histogram
+    peaks, properties = find_peaks(hist, distance=min_distance, height=height_threshold,
+                                   prominence=0.25*height_threshold)
+
+    # Check if we have at least 2 peaks
+    if len(peaks) < 2:
+        print("Warning: Unable to identify both floor and ceiling surfaces.")
+        return None, None
+
+    # The lowest peak corresponds to the floor and the highest peak corresponds to the ceiling
+    y1 = bin_edges[peaks[0]] + point_cloud_resolution
+    y2 = bin_edges[peaks[-1]] - point_cloud_resolution
+
+    # Plotting
+    if plot_histograms_for_walls:
+        plt.figure(figsize=(10, 6))
+        plt.bar(bin_edges[:-1], hist, width=point_cloud_resolution, align='edge')
+        plt.plot(bin_edges[:-1], hist, color='black', lw=1.5)
+        plt.scatter(bin_edges[peaks], hist[peaks], color='red', s=100, zorder=3, label='Detected peaks')
+        plt.axvline(x=y1, color='cyan', linestyle='--', label=f'wall face 1: {y1:.3f}')
+        plt.axvline(x=y2, color='yellow', linestyle='--', label=f'wall face 2: {y2:.3f}')
+        plt.xlabel('y-coordinate (m)')
+        plt.ylabel('Frequency')
+        plt.legend()
+        # plt.title('y-coordinate histogram with wall faces peaks')
+        plt.savefig('images/wall_outputs_images/identified_wall_faces_%d.jpg' % wall_number, dpi=300)
+        plt.savefig('images/wall_outputs_images/identified_wall_faces_%d.pdf' % wall_number)
+        plt.show()
+
+    return y1, y2
+
+
+def assign_points_to_walls(x_coords, y_coords, z_coords, wall_axes, parallel_groups, z_floor, z_ceiling):
+    """Assign each point in the point cloud to a wall based on its proximity to the wall's axis and compute thickness."""
+
+    def compute_wall_thickness(segment_group):
+        """Compute the thickness of the wall based on the perpendicular distance between two segments."""
+
+        # Sort the segments based on their lengths and select the two longest ones
+        segment_group_sorted = sorted(segment_group, key=lambda seg: distance_between_points(seg[0], seg[1]),
+                                      reverse=True)
+        segment1 = segment_group_sorted[0]
+        segment2 = segment_group_sorted[1]
+
+        # Calculate perpendicular distances from the endpoints of the first segment to the second segment
+        distance1 = distance_point_to_line(segment1[0], segment2[0], segment2[1])
+        distance2 = distance_point_to_line(segment1[1], segment2[0], segment2[1])
+
+        # Average the two distances to get the wall thickness
+        thickness = (distance1 + distance2) / 2
+
+        return thickness
+
+    wall_groups = [[] for _ in wall_axes]
+    wall_thicknesses = [compute_wall_thickness(seg_group) for seg_group in parallel_groups]
+
+    for x, y, z in zip(x_coords, y_coords, z_coords):
+        # Check if z-coordinate is within floor and ceiling bounds
+        if not (z_floor <= z <= z_ceiling):
+            continue
+
+        min_distance = float('inf')
+        assigned_wall_idx = None
+
+        for idx, axis in enumerate(wall_axes):
+            dist = distance_point_to_line((x, y), axis[0], axis[1])
+            acceptable_distance = 0.5 * wall_thicknesses[idx] + 0.1 * wall_thicknesses[idx]
+            if dist <= acceptable_distance and dist < min_distance:
+                assigned_wall_idx = idx
+                min_distance = dist
+
+        if assigned_wall_idx is not None:
+            wall_groups[assigned_wall_idx].append((x, y, z))
+
+    return wall_groups, wall_thicknesses
+
+
+def rotate_points_to_xz_plane(points, direction_vector):
+    """Rotate a group of points so that the direction vector aligns with the x-axis."""
+    # Calculate the angle between the direction vector and the x-axis
+    angle = math.atan2(direction_vector[1], direction_vector[0])
+
+    rotated_points = []
+    for x, y, z in points:
+        # Apply 2D rotation matrix on the x-y plane
+        new_x = x * math.cos(angle) + y * math.sin(angle)
+        new_y = -x * math.sin(angle) + y * math.cos(angle)
+        rotated_points.append((new_x, new_y, z))
+
+    return rotated_points
+
+
+def plot_wall(wall_points, thickness, wall_number):
+    """Visualize a wall using both 2D and 3D scatter plots as subfigures within a single figure."""
+
+    # Create a single figure with two subplots
+    fig = plt.figure(figsize=(15, 7))
+
+    # 2D Plot (subplot 1)
+    ax2D = fig.add_subplot(121)  # 1 row, 2 columns, plot 1
+    xs, ys, zs = zip(*wall_points)
+    ax2D.scatter(xs, zs, c='b', marker='o', s=1)
+    ax2D.set_aspect('equal', 'box')  # Equal aspect ratio
+    ax2D.text(0.05, 0.95, f'Thickness: {thickness:.3f} m', transform=ax2D.transAxes,
+              verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+    ax2D.set_xlabel('x-coordinate (m)')
+    ax2D.set_ylabel('z-coordiante (m)')
+
+    # 3D Plot (subplot 2)
+    ax3D = fig.add_subplot(122, projection='3d')  # 1 row, 2 columns, plot 2
+    ax3D.scatter(xs, ys, zs, c='b', marker='o', s=1)
+    ax3D.set_xlabel('x-coordinate (m)')
+    ax3D.set_ylabel('y-coordinate (m)')
+    ax3D.set_zlabel('z-coordinate (m)')
+
+    plt.tight_layout()
+    plt.savefig('images/wall_outputs_images/wall_%d_2D_3D.jpg' % wall_number, dpi=300)
+    plt.savefig('images/wall_outputs_images/wall_%d_2D_3D.pdf' % wall_number)
+    plt.show()
+
+
+def export_wall_points_to_txt(wall_groups, output_dir="walls_outputs_txt"):
+    """
+    Export the xyz coordinates of points for each wall to individual .txt files.
+
+    Parameters:
+    - wall_groups: List of lists. Each inner list contains the xyz coordinates of a wall.
+    - output_dir: String. Directory where the files will be saved.
+    """
+
+    # Check if output directory exists. If not, create it.
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    # Loop through each wall group and save its points to a .txt file
+    for idx, wall in enumerate(wall_groups, start=1):
+        file_path = os.path.join(output_dir, f"wall_{idx}.txt")
+        with open(file_path, 'w') as file:
+            for point in wall:
+                file.write(f"{point[0]} {point[1]} {point[2]}\n")
+
+    print(f"Exported wall points to {output_dir} directory.")
+
+
+def detect_rectangular_openings(wall_number, wall_points, resolution, grid_roughness,
+                                histogram_threshold=0.7, thickness_for_extraction=0.03, min_opening_width=0.3,
+                                min_opening_height=0.3, max_opening_aspect_ratio=4, door_z_min=0.1):
+    """Detect rectangular openings (windows and doors) in the wall."""
+
+    # Project points within the region of interest onto the x-z plane
+    y1, y2 = identify_wall_faces(wall_number, wall_points, resolution)
+    inner_threshold = y1 - thickness_for_extraction
+    outer_threshold = y1 + thickness_for_extraction
+
+    projected_points = [(x, z) for x, y, z in wall_points if inner_threshold <= y <= outer_threshold]
+
+    # Project all points onto the x-coordinate
+    x_coords, z_coords = zip(*projected_points)
+
+    # Create a histogram with bins of size equal to point_cloud_resolution
+    x_min, x_max = min(x_coords), max(x_coords)
+    bins = int((x_max - x_min) / (resolution * grid_roughness))
+    hist, edges = np.histogram(x_coords, bins=bins, range=(x_min, x_max))
+
+    z_min, z_max = min(z_coords), max(z_coords)
+    z_bins = int((z_max - z_min) / (resolution * grid_roughness))
+
+    # Define a threshold to decide if a bin contains an opening or not
+    max10 = sorted(hist, reverse=True)[10]
+    x_threshold = max10 * histogram_threshold
+
+    # Identify start and end of openings
+    openings = []
+    in_opening = False
+    start, end = None, None
+    for i, count in enumerate(hist):
+        if count < x_threshold and not in_opening:
+            in_opening = True
+            start = edges[i]
+        elif count >= x_threshold and in_opening:
+            in_opening = False
+            end = edges[i]
+            if abs(end - start) > min_opening_width:
+                openings.append((start, end))
+
+    # For each valid opening, determine more precise height using z-histogram
+    valid_opening_widths, valid_opening_heights, valid_opening_types = [], [], []
+    for x_start, x_end in openings:
+        middle_x = (x_start + x_end) / 2
+        tolerance = min_opening_width * 0.45
+        points_at_middle = [z for x, z in projected_points if (middle_x - tolerance) <= x <= (middle_x + tolerance)]
+
+        z_hist, z_edges = np.histogram(points_at_middle, bins=z_bins, range=(z_min, z_max))
+        max2 = sorted(z_hist, reverse=True)[2]
+        z_threshold = max2 * 0.2
+
+        candidates = []
+        in_opening = False
+        refined_z_min, refined_z_max = None, None
+        for i, count in enumerate(z_hist):
+            if count < z_threshold and not in_opening:
+                in_opening = True
+                refined_z_min = z_edges[i]
+            elif count >= z_threshold and in_opening:
+                in_opening = False
+                refined_z_max = z_edges[i + 1]
+                candidates.append((refined_z_min, refined_z_max))
+                refined_z_min, refined_z_max = None, None  # Reset for next potential candidate
+
+        if candidates:
+            refined_z_min, refined_z_max = max(candidates, key=lambda pair: pair[1] - pair[0])
+
+            width = x_end - x_start
+            height = refined_z_max - refined_z_min
+
+            if height > min_opening_height and (height / width) < max_opening_aspect_ratio:
+                valid_opening_widths.append((x_start, x_end))
+                valid_opening_heights.append((refined_z_min, refined_z_max))
+                if min([refined_z_min, refined_z_max]) < door_z_min:
+                    valid_opening_heights[-1] = (0.0, refined_z_max)
+                    valid_opening_types.append('door')
+                else:
+                    valid_opening_types.append('window')
+
+    # Plotting
+    fig = plt.figure(figsize=(18, 10))
+    bin_width_x = (x_max - x_min) / bins
+    bin_width_z = (z_max - z_min) / z_bins
+
+    # Plot the projected points and the openings
+    axs0 = fig.add_subplot(221)
+    xs, zs = zip(*projected_points)
+    axs0.scatter(xs, zs, s=1, c='g')
+    for (x_start, x_end), (z1, z2), op_type in zip(valid_opening_widths, valid_opening_heights,
+                                                   valid_opening_types):
+        z_start = min([z1, z2])
+        z_end = max([z1, z2])
+        if op_type == 'door':
+            axs0.add_patch(
+                plt.Rectangle((x_start, z_start), x_end - x_start, z_end - z_start, edgecolor='r',
+                              facecolor='red', alpha=0.2, linewidth=2, label='door'))
+        else:
+            axs0.add_patch(
+                plt.Rectangle((x_start, z_start), x_end - x_start, z_end - z_start, edgecolor='blue',
+                              facecolor='blue', alpha=0.2, linewidth=2, label='window'))
+    axs0.set_xlabel("x-coordinate (m)")
+    axs0.set_ylabel("z-coordinate (m)")
+
+    # Plot x-histogram
+    axs1 = fig.add_subplot(223)
+    axs1.bar(edges[:-1], hist, width=bin_width_x)
+    axs1.axhline(y=x_threshold, color='r', linestyle='dashed', label='x-threshold')
+    axs1.legend(loc='upper right')
+    axs1.set_xlabel("x-coordinate (m)")
+    axs0.set_ylabel("z-coordinate (m)")
+
+    # Plot z-histogram for the opening refinement
+    axs2 = fig.add_subplot(222)
+    axs2.bar(z_edges[:-1], z_hist, width=bin_width_z)
+    axs2.axhline(y=z_threshold, color='g', linestyle='dashed', label='z-threshold')
+    axs2.legend()
+    axs2.set_xlabel("z-coordinate (m)")
+    axs2.set_ylabel("Count")
+    plt.tight_layout()
+    plt.savefig('images/wall_outputs_images/wall_%d_openings.jpg' % wall_number, dpi=300)
+    plt.savefig('images/wall_outputs_images/wall_%d_openings.pdf' % wall_number)
+    plt.show()
+
+    return valid_opening_widths, valid_opening_heights, valid_opening_types

@@ -1,7 +1,6 @@
 from aux_functions import *
 from generate_ifc import IFCmodel
 
-
 # input point clouds
 e57_input = False  # if True, only one xyz_file is created (e57 files are merged)
 # e57_file_names = ["input_e57/test_room.e57"]
@@ -9,7 +8,6 @@ e57_input = False  # if True, only one xyz_file is created (e57 files are merged
 e57_file_names = ["input_e57/06th.e57", "input_e57/07th.e57"]
 
 xyz_filenames = ['input_xyz/Test_room_merged_subsampled.xyz']
-
 # input parameters for identification of elements
 pointcloud_resolution = 0.002
 minimum_wall_length = 0.2
@@ -34,7 +32,6 @@ ifc_site_latitude = (50, 5, 0)
 ifc_site_longitude = (4, 22, 0)
 ifc_site_elevation = 356.0  # elevation of the site above the sea level
 material_for_slabs = 'Concrete'
-
 
 # initiate the logger
 last_time = time.time()
@@ -68,15 +65,46 @@ pointcloud_storeys = split_pointcloud_to_storeys(points_xyz, slabs)
 walls = []
 id = 0
 for i, storey_pointcloud in enumerate(pointcloud_storeys):
-    start_points, end_points, wall_thicknesses, wall_materials = identify_walls(storey_pointcloud, pointcloud_resolution, minimum_wall_length,
-                                                                                minimum_wall_thickness, maximum_wall_thickness, i)
+    start_points, end_points, wall_thicknesses, wall_materials, grid_coefficient, translated_filtered_rotated_wall_groups = identify_walls(storey_pointcloud, pointcloud_resolution, minimum_wall_length,
+                                                             minimum_wall_thickness, maximum_wall_thickness, i)
     z_placement = slabs[i]['slab_bottom_z_coord'] + slabs[i]['thickness']
-    wall_height = slabs[i+1]['slab_bottom_z_coord'] - z_placement
+    wall_height = slabs[i + 1]['slab_bottom_z_coord'] - z_placement
     for j in range(len(start_points)):
         id += 1
-        walls.append({'id': id, 'storey': i+1, 'start_point': start_points[j], 'end_point': end_points[j],
+        walls.append({'id': id, 'storey': i + 1, 'start_point': start_points[j], 'end_point': end_points[j],
                       'thickness': wall_thicknesses[j], 'material': wall_materials[j], 'z_placement': z_placement,
                       'height': wall_height})
+
+all_openings = []
+for idx, wall_group in enumerate(translated_filtered_rotated_wall_groups):
+    opening_widths, opening_heights, opening_types = detect_rectangular_openings(idx + 1, wall_group,
+                                                                                 pointcloud_resolution,
+                                                                                 grid_coefficient)
+
+    # Temporary list to store openings for the current wall
+    wall_openings = []
+
+    # Iterate through the detected openings and store the information
+    for (x_start, x_end), (z_min, z_max), opening_type in zip(opening_widths, opening_heights, opening_types):
+        opening_info = {
+            "opening_wall_id": idx + 1,
+            "opening_type": opening_type,
+            "x_range_start": x_start,
+            "x_range_end": x_end,
+            "z_range_min": z_min,
+            "z_range_max": z_max
+        }
+        # Append the current opening's information to the wall's openings list
+        wall_openings.append(opening_info)
+
+    # After processing all openings for the current wall, append them to the all_openings list
+    all_openings.extend(wall_openings)
+
+    # Print or further process the results
+    print(f"Wall {idx + 1}:")
+    for (x_start, x_end), (z_min, z_max), opening_type in zip(opening_widths, opening_heights, opening_types):
+        print(f"Opening ({opening_type:s}): X-Range: {x_start:.2f} to {x_end:.2f}, Z-Range: {z_min:.2f} to {z_max:.2f}")
+    print("-" * 50)
 
 # generate IFC model
 ifc_model = IFCmodel(ifc_project_name, ifc_output_file)
@@ -89,7 +117,6 @@ ifc_model.define_project_data(ifc_building_name, ifc_building_type, ifc_building
 # Add building storeys
 storeys_ifc, slabs_ifc = [], []
 for idx, slab in enumerate(slabs):
-
     # define a storey
     slab_position = slab['slab_bottom_z_coord'] + slab['thickness']
     storeys_ifc.append(ifc_model.create_building_storey('Floor %.1f m' % slab_position, slab_position))
@@ -105,7 +132,7 @@ for idx, slab in enumerate(slabs):
     # assign the slab to a storey and save them to the IFC model
     ifc_model.assign_product_to_storey(slabs_ifc[-1], storeys_ifc[-1])
 
-# Wall definitition for IFC
+# Wall definition for IFC
 for wall in walls:
     start_point = tuple(float(num) for num in wall['start_point'])
     end_point = tuple(float(num) for num in wall['end_point'])
@@ -114,6 +141,8 @@ for wall in walls:
     wall_z_placement = wall['z_placement']
     wall_heights = wall['height']
 
+    wall_openings = [opening for opening in all_openings if opening['opening_wall_id'] == wall['id']]
+
     # Create a material layer
     material_layer = ifc_model.create_material_layer(wall_thickness, wall_material)
     # Create an IfcMaterialLayerSet using the material layer (in a list)
@@ -121,7 +150,7 @@ for wall in walls:
     # Create an IfcMaterialLayerSetUsage and associate it with the element or product
     material_layer_set_usage = ifc_model.create_material_layer_set_usage(material_layer_set, wall_thickness)
     # Local placement
-    wall_placement = ifc_model.wall_placement(start_point, float(wall_z_placement))
+    wall_placement = ifc_model.wall_placement(float(wall_z_placement))
     wall_axis_placement = ifc_model.wall_axis_placement(start_point, end_point)
     wall_axis_representation = ifc_model.wall_axis_representation(wall_axis_placement)
     wall_swept_solid_representation = ifc_model.wall_swept_solid_representation(start_point, end_point, wall_heights, wall_thickness)
@@ -132,30 +161,26 @@ for wall in walls:
     assign_material_2 = ifc_model.assign_material(wall_type[0], material_layer_set)
     assign_object = ifc_model.assign_product_to_storey(wall, storeys_ifc[0])
 
-"""start_point = (-92.64, -34.203)
-end_point = (7.5, 5.5)
-wall_thickness = 0.3
-wall_material = "Concrete"
-wall_z_placement = 50.3
-wall_heights = 2.8
+    for opening in wall_openings:
+        # Each 'opening' is a dictionary with the opening data
+        opening_type = opening['opening_type']
+        x_range_start = opening['x_range_start']
+        x_range_end = opening['x_range_end']
+        z_range_min = opening['z_range_min']
+        z_range_max = opening['z_range_max']
 
-# Create a material layer
-material_layer = ifc_model.create_material_layer(wall_thickness, wall_material)
-# Create an IfcMaterialLayerSet using the material layer (in a list)
-material_layer_set = ifc_model.create_material_layer_set([material_layer],wall_thickness)
-# Create an IfcMaterialLayerSetUsage and associate it with the element or product
-material_layer_set_usage = ifc_model.create_material_layer_set_usage(material_layer_set, wall_thickness)
-# Local placement
-wall_placement = ifc_model.wall_placement(start_point, float(wall_z_placement))
-wall_axis_placement = ifc_model.wall_axis_placement(start_point, end_point)
-wall_axis_representation = ifc_model.wall_axis_representation(wall_axis_placement)
-wall_swept_solid_representation = ifc_model.wall_swept_solid_representation(start_point, end_point, wall_heights, wall_thickness)
-product_definition_shape = ifc_model.product_definition_shape(wall_axis_representation, wall_swept_solid_representation)
-wall = ifc_model.create_wall(wall_placement, product_definition_shape)
-assign_material = ifc_model.assign_material(wall, material_layer_set_usage)
-wall_type = ifc_model.create_wall_type(wall, wall_thickness)
-assign_material_2 = ifc_model.assign_material(wall_type[0], material_layer_set)
-assign_object = ifc_model.assign_product_to_storey(wall, storeys_ifc[0])"""
+        opening_width = x_range_end - x_range_start
+        opening_height = z_range_max - z_range_min
+        window_sill_height = z_range_min
+        offset_from_start = x_range_start
+
+        opening_closed_profile = ifc_model.opening_closed_profile_def(float(opening_width), wall_thickness)
+        opening_placement = ifc_model.opening_placement(start_point, wall_placement)
+        opening_extrusion = ifc_model.opening_extrusion(opening_closed_profile, float(opening_height), start_point, end_point, float(window_sill_height), float(offset_from_start))
+        opening_representation = ifc_model.opening_representation(opening_extrusion)
+        opening_product_definition = ifc_model.product_definition_shape_opening(opening_representation)
+        wall_opening = ifc_model.create_wall_opening(opening_placement[1], opening_product_definition)
+        rel_voids_element = ifc_model.create_rel_voids_element(wall, wall_opening)
 
 # Write the IFC model to a file
 ifc_model.write()

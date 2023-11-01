@@ -5,7 +5,6 @@ import ifcopenshell.util.unit
 import ifcopenshell.util.element
 import ifcopenshell.util.placement
 import datetime
-import random
 import uuid
 import math
 
@@ -398,7 +397,7 @@ class IFCmodel:
         )
         return material_layer_set_usage
 
-    def wall_placement(self, start_point, z_placement):
+    def wall_placement(self, z_placement):
         # Inception of coordination system - related to wall
         axis_placement_wall = self.ifc_file.create_entity(
             "IfcAxis2Placement3D",
@@ -446,8 +445,8 @@ class IFCmodel:
         dx = end_point[0] - start_point[0]
         dy = end_point[1] - start_point[1]
         magnitude = math.sqrt(dx ** 2 + dy ** 2)
-        direction_x = float(dx/magnitude)
-        direction_y = float(dy/magnitude)
+        direction_x = float(dx / magnitude)
+        direction_y = float(dy / magnitude)
         axis_placement_2d = self.ifc_file.create_entity(
             "IfcAxis2Placement2D",
             Location=rectangle_reference_point,
@@ -542,6 +541,112 @@ class IFCmodel:
             RelatedDefinitions=[wall_type],
         )
         return wall_type, rel_defines_by_type, rel_declares
+
+    # Wall opening definition
+
+    def create_wall_opening(self, opening_placement, opening_representation):
+        opening_standard_case = self.ifc_file.create_entity(
+            "IfcOpeningElement",
+            GlobalId=ifcopenshell.guid.new(),
+            OwnerHistory=self.owner_history,
+            Name="Opening ID",
+            Description="Wall opening",
+            ObjectType=None,
+            ObjectPlacement=opening_placement,
+            Representation=opening_representation,
+            Tag=None,
+            PredefinedType="OPENING",
+        )
+        return opening_standard_case
+
+    # opening placement
+    def opening_placement(self, wall_start_point, wall_placement):
+        # Inception of coordination system - related to wall
+        axis_placement_window = self.ifc_file.create_entity(
+            "IfcAxis2Placement3D",
+            Location=self.ifc_file.create_entity("IfcCartesianPoint", Coordinates=(wall_start_point[0], wall_start_point[1], 0.0)),
+            Axis=None,
+            RefDirection=None
+        )
+
+        window_placement = self.ifc_file.create_entity(
+            "IfcLocalPlacement",
+            PlacementRelTo=wall_placement,
+            RelativePlacement=axis_placement_window
+        )
+        return axis_placement_window, window_placement
+
+    def opening_representation(self, opening_extrusion_represent):
+        # Create an IfcShapeRepresentation for the opening
+        opening_representation = self.ifc_file.create_entity(
+            "IfcShapeRepresentation",
+            ContextOfItems=self.context,  # Replace with the appropriate context
+            RepresentationIdentifier='Body',
+            RepresentationType='SweptSolid',
+            Items=[opening_extrusion_represent],  # Replace with the appropriate geometry items for the opening
+        )
+        return opening_representation
+
+    def product_definition_shape_opening(self, opening_representation):
+        product_definition_shape = self.ifc_file.create_entity(
+            "IfcProductDefinitionShape",
+            Representations=[opening_representation]
+        )
+        return product_definition_shape
+
+    def opening_closed_profile_def(self, opening_width, wall_thickness):
+
+        points = [(0.0, - wall_thickness / 2), (0.0, wall_thickness/2), (opening_width, wall_thickness / 2), (opening_width, - wall_thickness/2)]
+        points = [(float(x), float(y)) for x, y in points]
+
+        # Convert points to IfcCartesianPoint instances
+        extrusion_points = [
+            self.ifc_file.create_entity("IfcCartesianPoint", Coordinates=point)
+            for point in points
+        ]
+
+        polyline_profile_area = self.ifc_file.create_entity(
+            "IfcArbitraryClosedProfileDef",
+            ProfileType="AREA",
+            ProfileName="Opening perimeter",
+            OuterCurve=self.ifc_file.create_entity("IfcPolyline", Points=extrusion_points + [extrusion_points[0]])
+        )
+        return polyline_profile_area
+
+    def opening_extrusion(self, polyline_profile_area, opening_height, start_point, end_point, opening_sill_height, offset_from_start):
+
+        dx = end_point[0] - start_point[0]
+        dy = end_point[1] - start_point[1]
+        magnitude = math.sqrt(dx ** 2 + dy ** 2)
+        direction_x = float(dx / magnitude)
+        direction_y = float(dy / magnitude)
+
+        opening_extrusion = self.ifc_file.create_entity(
+            "IfcExtrudedAreaSolid",
+            SweptArea=polyline_profile_area,
+            Position=self.ifc_file.create_entity(
+                "IfcAxis2Placement3D",
+                Location=self.ifc_file.create_entity("IfcCartesianPoint", Coordinates=(direction_x * offset_from_start,
+                                                                                       direction_y * offset_from_start, opening_sill_height)),
+                Axis=None,
+                RefDirection=self.ifc_file.createIfcDirection((direction_x, direction_y))
+            ),
+            ExtrudedDirection=self.ifc_file.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0)),
+            Depth=opening_height
+        )
+        return opening_extrusion
+
+    def create_rel_voids_element(self, relating_building_element, related_opening_element):
+        rel_voids_element = self.ifc_file.create_entity(
+            "IfcRelVoidsElement",
+            GlobalId=ifcopenshell.guid.new(),
+            OwnerHistory=self.owner_history,
+            Name=None,  # this corresponds to the "$" in your IFC code
+            Description=None,  # this corresponds to the "$" in your IFC code
+            RelatingBuildingElement=relating_building_element,
+            RelatedOpeningElement=related_opening_element
+        )
+        return rel_voids_element
 
     def write(self):
         self.ifc_file.write(self.output_file)
