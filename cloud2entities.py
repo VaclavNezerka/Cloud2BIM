@@ -58,7 +58,9 @@ points_xyz = np.round(points_xyz, 3)  # round the xyz coordinates to 3 decimals
 last_time = log('All point cloud data imported.', last_time, log_filename)
 
 # scan the model along the z-coordinate and search for planes parallel to xy-plane
-slabs, horizontal_surface_planes = identify_slabs_from_point_cloud(points_xyz, points_rgb, z_step=0.1, plot_segmented_plane=False)
+slabs, horizontal_surface_planes = identify_slabs_from_point_cloud(points_xyz, points_rgb, z_step=0.1,
+                                                                   pointcloud_resolution=pointcloud_resolution,
+                                                                   plot_segmented_plane=False)
 
 # merge_horizontal_pointclouds_in_storey(horizontal_surface_planes)
 pointcloud_storeys = split_pointcloud_to_storeys(points_xyz, slabs)

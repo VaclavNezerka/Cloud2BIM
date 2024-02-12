@@ -100,7 +100,50 @@ def create_hull_alphashape(points_3d, concavity_level=1.0):
     return x_coords, y_coords, polygon
 
 
-def identify_slabs_from_point_cloud(points_xyz, points_rgb, z_step, plot_segmented_plane=False):
+def create_hull_from_histogram(points_3d, pointcloud_resolution, grid_coefficient=5, plot_contours=False):
+    # Project 3D points to 2D
+    points_2d = np.array([[x, y] for x, y, _ in points_3d])
+
+    # Parameters for histogram
+    pixel_size = pointcloud_resolution * grid_coefficient
+    x_min, x_max = points_2d[:, 0].min(), points_2d[:, 0].max()
+    y_min, y_max = points_2d[:, 1].min(), points_2d[:, 1].max()
+    x_edges = np.arange(x_min, x_max + pixel_size, pixel_size)
+    y_edges = np.arange(y_min, y_max + pixel_size, pixel_size)
+
+    # Create 2D histogram and mask
+    histogram, _, _ = np.histogram2d(points_2d[:, 0], points_2d[:, 1], bins=(x_edges, y_edges))
+    mask = histogram.T > 2  # Threshold to create mask, transposed for correct orientation
+
+    # Find contours on the transposed mask for correct orientation
+    contours, hierarchy = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Plotting
+    if plot_contours:
+        fig, ax = plt.subplots()
+        ax.imshow(mask, origin='lower', extent=[x_min, x_max, y_min, y_max], cmap='Greys', alpha=0.5)
+        ax.scatter(points_2d[:, 0], points_2d[:, 1], s=1, color='blue')
+
+    # Adjust contour scaling
+    for contour in contours:
+        contour = np.squeeze(contour, axis=1)  # Remove redundant dimension
+        # Adjusting scaling to fully cover the bin extents
+        contour_scaled = (contour + 0.5) * pixel_size + [x_min, y_min]  # Add 0.5 to shift to the center of the bin
+        polygon = Polygon(contour_scaled, fill=None, edgecolor='red')
+        if plot_contours:
+            ax.add_patch(polygon)
+    x_contour = contour_scaled[:, 0].flatten()
+    y_contour = contour_scaled[:, 1].flatten()
+
+    if plot_contours:
+        ax.set_xlim([x_min, x_max])
+        ax.set_ylim([y_min, y_max])
+        plt.show()
+
+    return x_contour, y_contour, polygon
+
+
+def identify_slabs_from_point_cloud(points_xyz, points_rgb, z_step, pointcloud_resolution, plot_segmented_plane=False):
     z_min, z_max = min(points_xyz[:, 2]), max(points_xyz[:, 2])
     n_steps = int((z_max - z_min) / z_step + 1)
     z_array, n_points_array = [], []
@@ -140,7 +183,12 @@ def identify_slabs_from_point_cloud(points_xyz, points_rgb, z_step, plot_segment
             slab_top_z_coord = np.median(horiz_surface_planes[i][:, 2])
             slab_thickness = slab_top_z_coord - slab_bottom_z_coord
             slab_points = np.concatenate((horiz_surface_planes[i - 1], horiz_surface_planes[i]), axis=0)
-            x_coords, y_coords, polygon = create_hull_alphashape(slab_points, concavity_level=0.0)  # 0.0 -> convex
+
+            # create hull for the slab
+            # x_coords, y_coords, polygon = create_hull_alphashape(slab_points, concavity_level=0.0)  # 0.0 -> convex
+            x_coords, y_coords, polygon = create_hull_from_histogram(slab_points, pointcloud_resolution,
+                                                                     grid_coefficient=5)
+
             slabs.append({'polygon': polygon, 'polygon_x_coords': x_coords, 'polygon_y_coords': y_coords,
                           'slab_bottom_z_coord': slab_bottom_z_coord, 'thickness': slab_thickness})
             print('Slab no. %d: bottom (z-coordinate) = %.3f m, thickness = %0.1f mm'
@@ -472,7 +520,8 @@ def plot_parallel_groups(groups, wall_axes, binary_image, points_2d, x_min, x_ma
     plt.close(fig)
 
 
-def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minimum_wall_thickness, maximum_wall_thickness, storey):
+def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minimum_wall_thickness,
+                   maximum_wall_thickness, storey):
     x_coords, y_coords, z_coords = zip(*pointcloud)
     z_section_boundaries = [0.9, 1.0]  # percentage of the height for the storey sections
     grid_coefficient = 5  # computational grid size (multiplies the point_cloud_resolution)
