@@ -2,14 +2,24 @@ from aux_functions import *
 from generate_ifc import IFCmodel
 
 # input point clouds
-e57_input = False  # if True, only one xyz_file is created (e57 files are merged)
+e57_input = False
 # e57_file_names = ["input_e57/test_room.e57"]
 # e57_file_names = ['input_e57/05th.e57', "input_e57/06th.e57", "input_e57/07th.e57"]
-e57_file_names = ["input_e57/06th.e57", "input_e57/07th.e57"]
+# e57_file_names = ["input_e57/06th.e57", "input_e57/07th.e57"]
+e57_file_names = ["input_e57/multiple_floor.e57"]
 
-xyz_filenames = ['input_xyz/Test_room_merged_subsampled.xyz']
+# xyz_filenames = ["input_xyz/06th.xyz", "input_xyz/07th.xyz"]
+xyz_filenames = ["input_xyz/multiple_floor.xyz"]
+# xyz_filenames = ["input_xyz/Zurich_dataset_synth3.xyz"]
+dilute_pointcloud = False
+dilution_factor = 10
+
 # input parameters for identification of elements
 pointcloud_resolution = 0.002
+
+bottom_floor_slab_thickness = 0.2
+top_floor_ceiling_thickness = 0.05  # used if there is no slab in the point cloud for the uppermost floor
+
 minimum_wall_length = 0.2
 minimum_wall_thickness = 0.05
 maximum_wall_thickness = 0.6
@@ -37,34 +47,36 @@ material_for_slabs = 'Concrete'
 last_time = time.time()
 log_filename = "log.txt"
 
-# read e57 file
+# read e57 files and create xyz
 if e57_input:
-    imported_e57_data = []
-    for e57_file_name in e57_file_names:
+    for (idx, e57_file_name) in enumerate(e57_file_names):
         last_time = log('Reading %s.' % e57_file_name, last_time, log_filename)
-        imported_e57_data.append(read_e57(e57_file_name))
-    last_time = log('Saving the data to %s...' % xyz_filenames[0], last_time, log_filename)
-    e57_data_to_xyz(imported_e57_data, xyz_filenames[0], chunk_size=1000)
-    last_time = log('e57 file(s) converted to ASCII format, saved as %s.' % xyz_filenames[0], last_time, log_filename)
+        imported_e57_data = read_e57(e57_file_name)
+        e57_data_to_xyz(imported_e57_data, xyz_filenames[idx], chunk_size=1e10)
+        last_time = log('File %s converted to ASCII format, saved as %s.' % (e57_file_name, xyz_filenames[idx]),
+                        last_time, log_filename)
 
 # read xyz file
 points_xyz, points_rgb = np.empty((0, 3)), np.empty((0, 3))
 for xyz_filename in xyz_filenames:
     last_time = log('Extracting data from %s...' % xyz_filename, last_time, log_filename)
-    points_xyz_temp, points_rgb_temp = load_xyz_file(xyz_filename, plot_xyz=False)
+    points_xyz_temp, points_rgb_temp = load_xyz_file(xyz_filename, plot_xyz=False, select_ith_lines=dilute_pointcloud,
+                                                     ith_lines=dilution_factor)
     points_xyz = np.vstack((points_xyz, np.array(points_xyz_temp)))
     points_rgb = np.vstack((points_rgb, np.array(points_rgb_temp)))
 points_xyz = np.round(points_xyz, 3)  # round the xyz coordinates to 3 decimals
 last_time = log('All point cloud data imported.', last_time, log_filename)
 
 # scan the model along the z-coordinate and search for planes parallel to xy-plane
-slabs, horizontal_surface_planes = identify_slabs_from_point_cloud(points_xyz, points_rgb, z_step=0.1,
+slabs, horizontal_surface_planes = identify_slabs_from_point_cloud(points_xyz, points_rgb, bottom_floor_slab_thickness,
+                                                                   top_floor_ceiling_thickness, z_step=0.05,
                                                                    pointcloud_resolution=pointcloud_resolution,
-                                                                   plot_segmented_plane=False)
+                                                                   plot_segmented_plane=False)  # plot with open 3D
 
 # merge_horizontal_pointclouds_in_storey(horizontal_surface_planes)
 pointcloud_storeys = split_pointcloud_to_storeys(points_xyz, slabs)
 walls = []
+all_openings = []
 id = 0
 for i, storey_pointcloud in enumerate(pointcloud_storeys):
     start_points, end_points, wall_thicknesses, wall_materials, grid_coefficient, translated_filtered_rotated_wall_groups = identify_walls(storey_pointcloud, pointcloud_resolution, minimum_wall_length,
@@ -77,36 +89,36 @@ for i, storey_pointcloud in enumerate(pointcloud_storeys):
                       'thickness': wall_thicknesses[j], 'material': wall_materials[j], 'z_placement': z_placement,
                       'height': wall_height})
 
-all_openings = []
-for idx, wall_group in enumerate(translated_filtered_rotated_wall_groups):
-    opening_widths, opening_heights, opening_types = detect_rectangular_openings(idx + 1, wall_group,
-                                                                                 pointcloud_resolution,
-                                                                                 grid_coefficient)
+        opening_widths, opening_heights, opening_types = detect_rectangular_openings(j + 1, translated_filtered_rotated_wall_groups[j],
+                                                                                             pointcloud_resolution,
+                                                                                             grid_coefficient)
+        # Temporary list to store openings for the current wall
+        wall_openings = []
 
-    # Temporary list to store openings for the current wall
-    wall_openings = []
+        # Iterate through the detected openings and store the information
+        for (x_start, x_end), (z_min, z_max), opening_type in zip(opening_widths, opening_heights, opening_types):
+            opening_info = {
+                "opening_wall_id": id,
+                "opening_type": opening_type,
+                "x_range_start": x_start,
+                "x_range_end": x_end,
+                "z_range_min": z_min,
+                "z_range_max": z_max
+            }
+            # Append the current opening's information to the wall's openings list
+            wall_openings.append(opening_info)
 
-    # Iterate through the detected openings and store the information
-    for (x_start, x_end), (z_min, z_max), opening_type in zip(opening_widths, opening_heights, opening_types):
-        opening_info = {
-            "opening_wall_id": idx + 1,
-            "opening_type": opening_type,
-            "x_range_start": x_start,
-            "x_range_end": x_end,
-            "z_range_min": z_min,
-            "z_range_max": z_max
-        }
-        # Append the current opening's information to the wall's openings list
-        wall_openings.append(opening_info)
+        # After processing all openings for the current wall, append them to the all_openings list
+        all_openings.extend(wall_openings)
 
-    # After processing all openings for the current wall, append them to the all_openings list
-    all_openings.extend(wall_openings)
+        # Print or further process the results
+        print(f"Wall {j + 1}:")
+        for (x_start, x_end), (z_min, z_max), opening_type in zip(opening_widths, opening_heights, opening_types):
+            print(
+                f"Opening ({opening_type:s}): X-Range: {x_start:.2f} to {x_end:.2f}, Z-Range: {z_min:.2f} to {z_max:.2f}")
+        print("-" * 50)
 
-    # Print or further process the results
-    print(f"Wall {idx + 1}:")
-    for (x_start, x_end), (z_min, z_max), opening_type in zip(opening_widths, opening_heights, opening_types):
-        print(f"Opening ({opening_type:s}): X-Range: {x_start:.2f} to {x_end:.2f}, Z-Range: {z_min:.2f} to {z_max:.2f}")
-    print("-" * 50)
+
 
 # generate IFC model
 ifc_model = IFCmodel(ifc_project_name, ifc_output_file)
@@ -127,6 +139,7 @@ for idx, slab in enumerate(slabs):
     points = [list(point) for point in zip(slab['polygon_x_coords'], slab['polygon_y_coords'])]
     points_no_duplicates = list(dict.fromkeys(map(tuple, points)))
     points_no_duplicates = [list(point) for point in points_no_duplicates]
+    points_no_duplicates = [[float(coord) for coord in point] for point in points_no_duplicates]
     slabs_ifc.append(ifc_model.create_slab('Slab %d' % (idx + 1), points_no_duplicates,
                                            round(slab['slab_bottom_z_coord'], 3),
                                            round(slab['thickness'], 3), material_for_slabs))

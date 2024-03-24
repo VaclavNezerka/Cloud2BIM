@@ -1,4 +1,5 @@
-import pye57
+# import pye57
+import e57
 import pandas as pd
 import open3d as o3d
 import alphashape
@@ -15,6 +16,7 @@ import cv2
 import random
 import math
 from scipy.signal import find_peaks
+from itertools import islice
 
 
 def log(message, last_time, filename):
@@ -30,37 +32,42 @@ def log(message, last_time, filename):
 
 def read_e57(file_name):
     # read the documentation at https://github.com/davidcaron/pye57
-    e57 = pye57.E57(file_name)
-    data_raw = e57.read_scan_raw(0)
-    return data_raw
+    # e57 = pye57.E57(file_name)
+    # data_raw = e57.read_scan_raw(0)
+
+    e57_array = e57.read_points(file_name)
+    return e57_array
 
 
-def e57_data_to_xyz(e57_data_array, output_file_name, chunk_size=10000):
-    for idx, e57_data in enumerate(e57_data_array):
-        num_chunks = (len(e57_data['cartesianX']) - 1) // chunk_size + 1  # Compute the number of chunks
-        print(f"\nProcessing e57 file no. {idx + 1}...")
+def e57_data_to_xyz(e57_data, output_file_name, chunk_size=10000):
+    points = e57_data.points
+    n_points = points.shape[0]
+    colors = e57_data.color
+    intensities = e57_data.intensity
 
-        for i in tqdm(range(num_chunks)):  # tqdm will display a progress bar
-            start = i * chunk_size
-            end = min((i + 1) * chunk_size, len(e57_data['cartesianX']))
+    num_chunks = int((n_points - 1) // chunk_size + 1)  # Compute the number of chunks
 
-            x = np.array(e57_data['cartesianX'][start:end])
-            y = np.array(e57_data['cartesianY'][start:end])
-            z = np.array(e57_data['cartesianZ'][start:end])
-            red = np.array(e57_data['colorRed'][start:end])
-            green = np.array(e57_data['colorGreen'][start:end])
-            blue = np.array(e57_data['colorBlue'][start:end])
-            intensity = np.array(e57_data['intensity'][start:end])
+    for i in tqdm(range(num_chunks)):  # tqdm will display a progress bar
+        start = int(i * chunk_size)
+        end = int(min((i + 1) * chunk_size, n_points))
 
-            df = pd.DataFrame({'X': x, 'Y': y, 'Z': z, 'R': red, 'G': green, 'B': blue, 'Intensity': intensity})
-            # Round the DataFrame entries to 3 decimal places
-            df = df.round(3)
+        x = points[:, 0][start:end]
+        y = points[:, 1][start:end]
+        z = points[:, 2][start:end]
+        red = colors[:, 0][start:end]
+        green = colors[:, 1][start:end]
+        blue = colors[:, 2][start:end]
+        intensity = intensities[:, 0][start:end]
 
-            # Check if file exists and is not empty
-            if os.path.exists(output_file_name) and os.path.getsize(output_file_name) > 0:
-                df.to_csv(output_file_name, sep='\t', index=False, header=False, mode='a')
-            else:
-                df.to_csv(output_file_name, sep='\t', index=False, header=True, mode='a')
+        df = pd.DataFrame({'X': x, 'Y': y, 'Z': z, 'R': red, 'G': green, 'B': blue, 'Intensity': intensity})
+        # Round the DataFrame entries to 3 decimal places
+        df = df.round(3)
+
+        # Check if file exists and is not empty
+        if os.path.exists(output_file_name) and os.path.getsize(output_file_name) > 0:
+            df.to_csv(output_file_name, sep='\t', index=False, header=False, mode='a')
+        else:
+            df.to_csv(output_file_name, sep='\t', index=False, header=True, mode='a')
 
 
 def save_xyz(points, output_file_name):
@@ -73,10 +80,23 @@ def save_xyz(points, output_file_name):
     print('Points saved as %s' % output_file_name)
 
 
-def load_xyz_file(file_name, plot_xyz=False):
-    pcd = np.loadtxt(file_name, skiprows=1)
-    xyz = pcd[:, :3]
-    rgb = pcd[:, 3:6]
+def load_selective_lines(filename, step):
+    with open(filename, 'r') as file:
+        # Skip the first line
+        next(file)
+        lines = (line.strip().split('\t') for line in islice(file, 0, None, step))
+        return [[float(element) for element in line] for line in lines]
+
+
+def load_xyz_file(file_name, plot_xyz=False, select_ith_lines=True, ith_lines=20):
+    if select_ith_lines:
+        pcd = np.array(load_selective_lines(file_name, ith_lines))
+        xyz = pcd[1:, :3]
+        rgb = pcd[1:, 3:6]
+    else:
+        pcd = np.loadtxt(file_name, skiprows=1)
+        xyz = pcd[:, :3]
+        rgb = pcd[:, 3:6]
 
     # show plot of xyz points from top view: (x, y) coordinates and with rgb-colored points
     if plot_xyz:
@@ -100,50 +120,68 @@ def create_hull_alphashape(points_3d, concavity_level=1.0):
     return x_coords, y_coords, polygon
 
 
-def create_hull_from_histogram(points_3d, pointcloud_resolution, grid_coefficient=5, plot_contours=False):
+def create_hull_from_histogram(points_3d, pointcloud_resolution, grid_coefficient, plot_contours,
+                               dilation_meters, erosion_meters):
     # Project 3D points to 2D
     points_2d = np.array([[x, y] for x, y, _ in points_3d])
 
     # Parameters for histogram
     pixel_size = pointcloud_resolution * grid_coefficient
+    dilation_kernel_size = int(dilation_meters / pixel_size)
+    erosion_kernel_size = int(erosion_meters / pixel_size)
+
     x_min, x_max = points_2d[:, 0].min(), points_2d[:, 0].max()
     y_min, y_max = points_2d[:, 1].min(), points_2d[:, 1].max()
-    x_edges = np.arange(x_min, x_max + pixel_size, pixel_size)
-    y_edges = np.arange(y_min, y_max + pixel_size, pixel_size)
+
+    # Extend the domain of the plot
+    extension_meters = 1  # extend the domain for histogram generation
+    x_min_extended, x_max_extended = x_min - extension_meters, x_max + extension_meters
+    y_min_extended, y_max_extended = y_min - extension_meters, y_max + extension_meters
+
+    x_edges = np.arange(x_min_extended, x_max_extended + pixel_size, pixel_size)
+    y_edges = np.arange(y_min_extended, y_max_extended + pixel_size, pixel_size)
 
     # Create 2D histogram and mask
     histogram, _, _ = np.histogram2d(points_2d[:, 0], points_2d[:, 1], bins=(x_edges, y_edges))
-    mask = histogram.T > 2  # Threshold to create mask, transposed for correct orientation
+    mask = histogram.T > 0  # Threshold to create mask, transposed for correct orientation
 
-    # Find contours on the transposed mask for correct orientation
-    contours, hierarchy = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # Apply morphological operations
+    kernel = np.ones((dilation_kernel_size, dilation_kernel_size), np.uint8)
+    mask_dilated = cv2.dilate(mask.astype(np.uint8), kernel, iterations=1)
+    kernel = np.ones((erosion_kernel_size, erosion_kernel_size), np.uint8)
+    mask_eroded = cv2.erode(mask_dilated, kernel, iterations=1)
+
+    # Find contours on the eroded mask for correct orientation
+    contours, hierarchy = cv2.findContours(mask_eroded, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    largest_contour = max(contours, key=cv2.contourArea)
 
     # Plotting
     if plot_contours:
         fig, ax = plt.subplots()
-        ax.imshow(mask, origin='lower', extent=[x_min, x_max, y_min, y_max], cmap='Greys', alpha=0.5)
+        ax.imshow(mask, origin='lower', extent=[x_min_extended, x_max_extended, y_min_extended, y_max_extended], cmap='Greys', alpha=0.5)
         ax.scatter(points_2d[:, 0], points_2d[:, 1], s=1, color='blue')
 
     # Adjust contour scaling
-    for contour in contours:
-        contour = np.squeeze(contour, axis=1)  # Remove redundant dimension
-        # Adjusting scaling to fully cover the bin extents
-        contour_scaled = (contour + 0.5) * pixel_size + [x_min, y_min]  # Add 0.5 to shift to the center of the bin
-        polygon = Polygon(contour_scaled, fill=None, edgecolor='red')
-        if plot_contours:
-            ax.add_patch(polygon)
+    contour = np.squeeze(largest_contour, axis=1)  # Remove redundant dimension
+    # Adjusting scaling to fully cover the bin extents
+    contour_scaled = (contour + 0.5) * pixel_size + [x_min_extended, y_min_extended]  # Add 0.5 to shift to the center of the bin
+    polygon = Polygon(contour_scaled, fill=None, edgecolor='red')
+    if plot_contours:
+        ax.add_patch(polygon)
     x_contour = contour_scaled[:, 0].flatten()
     y_contour = contour_scaled[:, 1].flatten()
 
     if plot_contours:
-        ax.set_xlim([x_min, x_max])
-        ax.set_ylim([y_min, y_max])
+        ax.set_xlim([x_min_extended, x_max_extended])
+        ax.set_ylim([y_min_extended, y_max_extended])
+        ax.set_aspect('equal', 'box')
         plt.show()
 
     return x_contour, y_contour, polygon
 
 
-def identify_slabs_from_point_cloud(points_xyz, points_rgb, z_step, pointcloud_resolution, plot_segmented_plane=False):
+def identify_slabs_from_point_cloud(points_xyz, points_rgb, bottom_floor_slab_thickness, top_floor_ceiling_thickness,
+                                    z_step, pointcloud_resolution, plot_segmented_plane=False):
     z_min, z_max = min(points_xyz[:, 2]), max(points_xyz[:, 2])
     n_steps = int((z_max - z_min) / z_step + 1)
     z_array, n_points_array = [], []
@@ -152,14 +190,19 @@ def identify_slabs_from_point_cloud(points_xyz, points_rgb, z_step, pointcloud_r
         idx_selected_xyz = np.where((z < points_xyz[:, 2]) & (points_xyz[:, 2] < (z + z_step)))[0]
         z_array.append(z)
         n_points_array.append(len(idx_selected_xyz))
+    max_n_points_array = 0.5 * max(n_points_array)
 
-    horiz_surface_candidates = []
-    max_n_points_array = max(n_points_array)
+    plt.plot(np.array(n_points_array) / 1000, z_array, '-r', linewidth=0.8)
+    plt.plot([max_n_points_array / 1000, max_n_points_array / 1000], [min(z_array), max(z_array)], '--b', linewidth=1.0)
+    plt.ylabel(r'Height/z-coordinate (m)')
+    plt.xlabel(r'Number of points ($\times 10^3$)')
+    plt.show()
 
     # extract z-coordinates where the density of points (indicated by a high value on the histogram) exceeds 50%
     # of a maximum -> horiz_surface candidates
+    horiz_surface_candidates = []
     for i in range(len(n_points_array)):
-        if n_points_array[i] > 0.5 * max_n_points_array:
+        if n_points_array[i] > max_n_points_array:
             horiz_surface_candidates.append([z_array[i], z_array[i] + z_step])
 
     horiz_surface_planes, horiz_surface_colors, horiz_surface_polygon, horiz_surface_polygon_x, \
@@ -177,8 +220,21 @@ def identify_slabs_from_point_cloud(points_xyz, points_rgb, z_step, pointcloud_r
     # merge lower and upper surface of each horiz_surface and create a hull
     slabs = []
     for i in range(len(horiz_surface_candidates)):
-        if (i % 2) == 1:
-            print('Creating hull for slab no. %d of %d.' % ((i + 1) / 2, len(horiz_surface_candidates) / 2))
+        if i == 0:
+            print('Creating hull for slab no. %d of %d.' % ((i + 1), int(len(horiz_surface_candidates) / 2) + 1))
+            slab_top_z_coord = np.median(horiz_surface_planes[i][:, 2])
+            slab_bottom_z_coord = slab_top_z_coord - bottom_floor_slab_thickness
+            # x_coords, y_coords, polygon = create_hull_alphashape(slab_points, concavity_level=0.0)  # 0.0 -> convex
+            x_coords, y_coords, polygon = create_hull_from_histogram(horiz_surface_planes[i], pointcloud_resolution,
+                                                                     grid_coefficient=5, plot_contours=False,
+                                                                     dilation_meters=0.5, erosion_meters=0.5)
+            slabs.append({'polygon': polygon, 'polygon_x_coords': x_coords, 'polygon_y_coords': y_coords,
+                          'slab_bottom_z_coord': slab_bottom_z_coord, 'thickness': bottom_floor_slab_thickness})
+            print('Slab no. %d: bottom (z-coordinate) = %.3f m, thickness = %0.1f mm'
+                  % ((i + 1) / 2, slab_bottom_z_coord, bottom_floor_slab_thickness * 1000))
+
+        elif (i % 2) == 0:
+            print('Creating hull for slab no. %d of %d.' % ((i + 1) / 2, int(len(horiz_surface_candidates) / 2) + 1))
             slab_bottom_z_coord = np.median(horiz_surface_planes[i - 1][:, 2])
             slab_top_z_coord = np.median(horiz_surface_planes[i][:, 2])
             slab_thickness = slab_top_z_coord - slab_bottom_z_coord
@@ -187,33 +243,26 @@ def identify_slabs_from_point_cloud(points_xyz, points_rgb, z_step, pointcloud_r
             # create hull for the slab
             # x_coords, y_coords, polygon = create_hull_alphashape(slab_points, concavity_level=0.0)  # 0.0 -> convex
             x_coords, y_coords, polygon = create_hull_from_histogram(slab_points, pointcloud_resolution,
-                                                                     grid_coefficient=5)
-
+                                                                     grid_coefficient=5, plot_contours=False,
+                                                                     dilation_meters=0.5, erosion_meters=0.5)
             slabs.append({'polygon': polygon, 'polygon_x_coords': x_coords, 'polygon_y_coords': y_coords,
                           'slab_bottom_z_coord': slab_bottom_z_coord, 'thickness': slab_thickness})
             print('Slab no. %d: bottom (z-coordinate) = %.3f m, thickness = %0.1f mm'
                   % ((i + 1) / 2, slab_bottom_z_coord, slab_thickness * 1000))
 
-    # plotting the slabs in x-y plane
-    for i in range(len(horiz_surface_planes)):
-        print('Plotting the horizontal surface no. %d of %d to file %s.' % (i + 1, len(horiz_surface_planes),
-                                                                            'images/horiz_surface_%d.jpg' % (i + 1)))
-        fig = plt.figure()
-        ax = fig.add_subplot(111)
-        ax.scatter(horiz_surface_planes[i][:, 0], horiz_surface_planes[i][:, 1], c=horiz_surface_colors[i], s=0.02)
-        # ax.scatter(outliers[:, 0], outliers[:, 1], outliers[:, 2], c='salmon', s=0.02)
-        # plt.axis('scaled')
-        if (i % 2) == 0:
-            new_slab_polygon = copy(slabs[int((i - 1) / 2)]['polygon'])  # to avoid a RuntimeError
-            ax.add_patch(new_slab_polygon)
-        else:
-            new_slab_polygon = copy(slabs[int((i - 1) / 2)]['polygon'])  # to avoid a RuntimeError
-            ax.add_patch(new_slab_polygon)
-        ax.set_aspect('equal', 'box')
-        # plt.show()
-        fig.tight_layout()
-        plt.savefig('images/horiz_surface_%d.jpg' % (i + 1), dpi=200)
-        plt.close(fig)
+        elif (i % 2) == 1 and i == len(horiz_surface_candidates) - 1:
+            print('Creating hull for slab no. %d of %d.' % ((i + 1) / 2, int(len(horiz_surface_candidates) / 2) + 1))
+            slab_bottom_z_coord = np.median(horiz_surface_planes[i][:, 2])
+
+            # create hull for the slab
+            # x_coords, y_coords, polygon = create_hull_alphashape(slab_points, concavity_level=0.0)  # 0.0 -> convex
+            x_coords, y_coords, polygon = create_hull_from_histogram(horiz_surface_planes[i], pointcloud_resolution,
+                                                                     grid_coefficient=5, plot_contours=True,
+                                                                     dilation_meters=0.5, erosion_meters=0.5)
+            slabs.append({'polygon': polygon, 'polygon_x_coords': x_coords, 'polygon_y_coords': y_coords,
+                          'slab_bottom_z_coord': slab_bottom_z_coord, 'thickness': top_floor_ceiling_thickness})
+            print('Slab no. %d: bottom (z-coordinate) = %.3f m, thickness = %0.1f mm'
+                  % ((i + 1) / 2, slab_bottom_z_coord, top_floor_ceiling_thickness * 1000))
 
         save_xyz(horiz_surface_planes[i], 'output_xyz/horiz_surface_%d.xyz' % (i + 1))
 
@@ -283,6 +332,17 @@ def distance_point_to_line(point, line_start, line_end):
                     (line_end[0] - line_start[0]) * point[1] + line_end[0] * line_start[1] -
                     line_end[1] * line_start[0])
     denominator = ((line_end[1] - line_start[1]) ** 2 + (line_end[0] - line_start[0]) ** 2) ** 0.5
+
+    # Check if the denominator is zero (or very close to zero to handle floating-point arithmetic issues)
+    if np.isclose(denominator, 0):
+        print("Warning: Denominator is zero or very close to zero. Returning NaN.")
+        return np.nan
+
+    # Check for NaN or Inf values in inputs
+    if np.any(np.isnan([point, line_start, line_end])) or np.any(np.isinf([point, line_start, line_end])):
+        print("Warning: One or more inputs are NaN or Inf. Returning NaN.")
+        return np.nan
+
     return numerator / denominator
 
 
@@ -630,8 +690,12 @@ def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minim
         # Translate the wall to start at the origin
         rotated_wall_axis = rotated_wall_axes[idx]
         min_x = min(rotated_wall_axis[0][0], rotated_wall_axis[1][0])
-        min_y = min([point[1] for point in wall_group])
-        min_z = min([point[2] for point in wall_group])
+        min_y, min_z = 10e10, 10e10
+        for point in wall_group:
+            min_y = min(min_y, point[1])
+            min_z = min(min_z, point[2])
+        print(min_y, min_z)
+
         translated_wall = [(x - min_x, y - min_y, z - min_z) for x, y, z in wall_group]
         translated_filtered_rotated_wall_groups.append(translated_wall)
         # plot_wall(translated_wall, wall_thicknesses[idx], idx+1)
@@ -701,7 +765,7 @@ def identify_wall_faces(wall_number, points, point_cloud_resolution, min_distanc
     hist, _ = np.histogram(y_coords, bins=bin_edges)
 
     # Set the height threshold to a percentage of the maximum histogram value
-    height_threshold = 0.5 * max(hist)
+    height_threshold = 0.4 * max(hist)
 
     # Find peaks in the histogram
     peaks, properties = find_peaks(hist, distance=min_distance, height=height_threshold,
@@ -849,126 +913,135 @@ def export_wall_points_to_txt(wall_groups, output_dir="walls_outputs_txt"):
 
 def detect_rectangular_openings(wall_number, wall_points, resolution, grid_roughness,
                                 histogram_threshold=0.7, thickness_for_extraction=0.03, min_opening_width=0.3,
-                                min_opening_height=0.3, max_opening_aspect_ratio=4, door_z_min=0.1):
+                                min_opening_height=0.3, max_opening_aspect_ratio=4, door_z_min=0.1,
+                                plot_histograms_for_openings=False):
     """Detect rectangular openings (windows and doors) in the wall."""
 
-    # Project points within the region of interest onto the x-z plane
-    y1, y2 = identify_wall_faces(wall_number, wall_points, resolution)
-    inner_threshold = y1 - thickness_for_extraction
-    outer_threshold = y1 + thickness_for_extraction
-
-    projected_points = [(x, z) for x, y, z in wall_points if inner_threshold <= y <= outer_threshold]
-
-    # Project all points onto the x-coordinate
-    x_coords, z_coords = zip(*projected_points)
-
-    # Create a histogram with bins of size equal to point_cloud_resolution
-    x_min, x_max = min(x_coords), max(x_coords)
-    bins = int((x_max - x_min) / (resolution * grid_roughness))
-    hist, edges = np.histogram(x_coords, bins=bins, range=(x_min, x_max))
-
-    z_min, z_max = min(z_coords), max(z_coords)
-    z_bins = int((z_max - z_min) / (resolution * grid_roughness))
-
-    # Define a threshold to decide if a bin contains an opening or not
-    max10 = sorted(hist, reverse=True)[10]
-    x_threshold = max10 * histogram_threshold
-
-    # Identify start and end of openings
-    openings = []
-    in_opening = False
-    start, end = None, None
-    for i, count in enumerate(hist):
-        if count < x_threshold and not in_opening:
-            in_opening = True
-            start = edges[i]
-        elif count >= x_threshold and in_opening:
-            in_opening = False
-            end = edges[i]
-            if abs(end - start) > min_opening_width:
-                openings.append((start, end))
-
-    # For each valid opening, determine more precise height using z-histogram
     valid_opening_widths, valid_opening_heights, valid_opening_types = [], [], []
-    for x_start, x_end in openings:
-        middle_x = (x_start + x_end) / 2
-        tolerance = min_opening_width * 0.45
-        points_at_middle = [z for x, z in projected_points if (middle_x - tolerance) <= x <= (middle_x + tolerance)]
+    try:
+        # Project points within the region of interest onto the x-z plane
+        y1, y2 = identify_wall_faces(wall_number, wall_points, resolution)
+        inner_threshold = y1 - thickness_for_extraction
+        outer_threshold = y1 + thickness_for_extraction
 
-        z_hist, z_edges = np.histogram(points_at_middle, bins=z_bins, range=(z_min, z_max))
-        max2 = sorted(z_hist, reverse=True)[2]
-        z_threshold = max2 * 0.2
+        projected_points = [(x, z) for x, y, z in wall_points if inner_threshold <= y <= outer_threshold]
 
-        candidates = []
+        # Project all points onto the x-coordinate
+        x_coords, z_coords = zip(*projected_points)
+
+        # Create a histogram with bins of size equal to point_cloud_resolution
+        x_min, x_max = min(x_coords), max(x_coords)
+        bins = int((x_max - x_min) / (resolution * grid_roughness))
+        hist, edges = np.histogram(x_coords, bins=bins, range=(x_min, x_max))
+
+        z_min, z_max = min(z_coords), max(z_coords)
+        z_bins = int((z_max - z_min) / (resolution * grid_roughness))
+
+        # Define a threshold to decide if a bin contains an opening or not
+        max10 = sorted(hist, reverse=True)[10]
+        x_threshold = max10 * histogram_threshold
+
+        # Identify start and end of openings
+        openings = []
         in_opening = False
-        refined_z_min, refined_z_max = None, None
-        for i, count in enumerate(z_hist):
-            if count < z_threshold and not in_opening:
+        start, end = None, None
+        for i, count in enumerate(hist):
+            if count < x_threshold and not in_opening:
                 in_opening = True
-                refined_z_min = z_edges[i]
-            elif count >= z_threshold and in_opening:
+                start = edges[i]
+            elif count >= x_threshold and in_opening:
                 in_opening = False
-                refined_z_max = z_edges[i + 1]
-                candidates.append((refined_z_min, refined_z_max))
-                refined_z_min, refined_z_max = None, None  # Reset for next potential candidate
+                end = edges[i]
+                if abs(end - start) > min_opening_width:
+                    openings.append((start, end))
 
-        if candidates:
-            refined_z_min, refined_z_max = max(candidates, key=lambda pair: pair[1] - pair[0])
+        # For each valid opening, determine more precise height using z-histogram
+        for x_start, x_end in openings:
+            middle_x = (x_start + x_end) / 2
+            tolerance = min_opening_width * 0.45
+            points_at_middle = [z for x, z in projected_points if (middle_x - tolerance) <= x <= (middle_x + tolerance)]
 
-            width = x_end - x_start
-            height = refined_z_max - refined_z_min
+            z_hist, z_edges = np.histogram(points_at_middle, bins=z_bins, range=(z_min, z_max))
+            max2 = sorted(z_hist, reverse=True)[2]
+            z_threshold = max2 * 0.2
 
-            if height > min_opening_height and (height / width) < max_opening_aspect_ratio:
-                valid_opening_widths.append((x_start, x_end))
-                valid_opening_heights.append((refined_z_min, refined_z_max))
-                if min([refined_z_min, refined_z_max]) < door_z_min:
-                    valid_opening_heights[-1] = (0.0, refined_z_max)
-                    valid_opening_types.append('door')
+            candidates = []
+            in_opening = False
+            refined_z_min, refined_z_max = None, None
+            for i, count in enumerate(z_hist):
+                if count < z_threshold and not in_opening:
+                    in_opening = True
+                    refined_z_min = z_edges[i]
+                elif count >= z_threshold and in_opening:
+                    in_opening = False
+                    refined_z_max = z_edges[i + 1]
+                    candidates.append((refined_z_min, refined_z_max))
+                    refined_z_min, refined_z_max = None, None  # Reset for next potential candidate
+
+            if candidates:
+                refined_z_min, refined_z_max = max(candidates, key=lambda pair: pair[1] - pair[0])
+
+                width = x_end - x_start
+                height = refined_z_max - refined_z_min
+
+                if height > min_opening_height and (height / width) < max_opening_aspect_ratio:
+                    valid_opening_widths.append((x_start, x_end))
+                    valid_opening_heights.append((refined_z_min, refined_z_max))
+                    if min([refined_z_min, refined_z_max]) < door_z_min:
+                        valid_opening_heights[-1] = (0.0, refined_z_max)
+                        valid_opening_types.append('door')
+                    else:
+                        valid_opening_types.append('window')
+
+
+        if plot_histograms_for_openings:
+            # Plotting
+            fig = plt.figure(figsize=(18, 10))
+            bin_width_x = (x_max - x_min) / bins
+            bin_width_z = (z_max - z_min) / z_bins
+
+            # Plot the projected points and the openings
+            axs0 = fig.add_subplot(221)
+            xs, zs = zip(*projected_points)
+            axs0.scatter(xs, zs, s=1, c='g')
+            for (x_start, x_end), (z1, z2), op_type in zip(valid_opening_widths, valid_opening_heights,
+                                                           valid_opening_types):
+                z_start = min([z1, z2])
+                z_end = max([z1, z2])
+                if op_type == 'door':
+                    axs0.add_patch(
+                        plt.Rectangle((x_start, z_start), x_end - x_start, z_end - z_start, edgecolor='r',
+                                      facecolor='red', alpha=0.2, linewidth=2, label='door'))
                 else:
-                    valid_opening_types.append('window')
+                    axs0.add_patch(
+                        plt.Rectangle((x_start, z_start), x_end - x_start, z_end - z_start, edgecolor='blue',
+                                      facecolor='blue', alpha=0.2, linewidth=2, label='window'))
+            axs0.set_xlabel("x-coordinate (m)")
+            axs0.set_ylabel("z-coordinate (m)")
 
-    # Plotting
-    fig = plt.figure(figsize=(18, 10))
-    bin_width_x = (x_max - x_min) / bins
-    bin_width_z = (z_max - z_min) / z_bins
+            # Plot x-histogram
+            axs1 = fig.add_subplot(223)
+            axs1.bar(edges[:-1], hist, width=bin_width_x)
+            axs1.axhline(y=x_threshold, color='r', linestyle='dashed', label='x-threshold')
+            axs1.legend(loc='upper right')
+            axs1.set_xlabel("x-coordinate (m)")
+            axs0.set_ylabel("z-coordinate (m)")
 
-    # Plot the projected points and the openings
-    axs0 = fig.add_subplot(221)
-    xs, zs = zip(*projected_points)
-    axs0.scatter(xs, zs, s=1, c='g')
-    for (x_start, x_end), (z1, z2), op_type in zip(valid_opening_widths, valid_opening_heights,
-                                                   valid_opening_types):
-        z_start = min([z1, z2])
-        z_end = max([z1, z2])
-        if op_type == 'door':
-            axs0.add_patch(
-                plt.Rectangle((x_start, z_start), x_end - x_start, z_end - z_start, edgecolor='r',
-                              facecolor='red', alpha=0.2, linewidth=2, label='door'))
+            # Plot z-histogram for the opening refinement
+            axs2 = fig.add_subplot(222)
+            axs2.bar(z_edges[:-1], z_hist, width=bin_width_z)
+            axs2.axhline(y=z_threshold, color='g', linestyle='dashed', label='z-threshold')
+            axs2.legend()
+            axs2.set_xlabel("z-coordinate (m)")
+            axs2.set_ylabel("Count")
+            plt.tight_layout()
+            plt.savefig('images/wall_outputs_images/wall_%d_openings.jpg' % wall_number, dpi=300)
+            plt.savefig('images/wall_outputs_images/wall_%d_openings.pdf' % wall_number)
+            plt.show()
         else:
-            axs0.add_patch(
-                plt.Rectangle((x_start, z_start), x_end - x_start, z_end - z_start, edgecolor='blue',
-                              facecolor='blue', alpha=0.2, linewidth=2, label='window'))
-    axs0.set_xlabel("x-coordinate (m)")
-    axs0.set_ylabel("z-coordinate (m)")
+            pass
 
-    # Plot x-histogram
-    axs1 = fig.add_subplot(223)
-    axs1.bar(edges[:-1], hist, width=bin_width_x)
-    axs1.axhline(y=x_threshold, color='r', linestyle='dashed', label='x-threshold')
-    axs1.legend(loc='upper right')
-    axs1.set_xlabel("x-coordinate (m)")
-    axs0.set_ylabel("z-coordinate (m)")
-
-    # Plot z-histogram for the opening refinement
-    axs2 = fig.add_subplot(222)
-    axs2.bar(z_edges[:-1], z_hist, width=bin_width_z)
-    axs2.axhline(y=z_threshold, color='g', linestyle='dashed', label='z-threshold')
-    axs2.legend()
-    axs2.set_xlabel("z-coordinate (m)")
-    axs2.set_ylabel("Count")
-    plt.tight_layout()
-    plt.savefig('images/wall_outputs_images/wall_%d_openings.jpg' % wall_number, dpi=300)
-    plt.savefig('images/wall_outputs_images/wall_%d_openings.pdf' % wall_number)
-    plt.show()
-
-    return valid_opening_widths, valid_opening_heights, valid_opening_types
+        return valid_opening_widths, valid_opening_heights, valid_opening_types
+    except (TypeError, ValueError):
+        print('Problem with wall boundaries identification, no openings detected.')
+        return  valid_opening_widths, valid_opening_heights, valid_opening_types
