@@ -9,8 +9,8 @@ e57_input = False
 e57_file_names = ["input_e57/multiple_floor.e57"]
 
 # xyz_filenames = ["input_xyz/06th.xyz", "input_xyz/07th.xyz"]
-xyz_filenames = ["input_xyz/multiple_floor.xyz"]
-# xyz_filenames = ["input_xyz/Zurich_dataset_synth3.xyz"]
+# xyz_filenames = ["input_xyz/multiple_floor.xyz"]
+xyz_filenames = ["input_xyz/Zurich_dataset_synth3.xyz"]
 dilute_pointcloud = False
 dilution_factor = 10
 
@@ -68,10 +68,10 @@ points_xyz = np.round(points_xyz, 3)  # round the xyz coordinates to 3 decimals
 last_time = log('All point cloud data imported.', last_time, log_filename)
 
 # scan the model along the z-coordinate and search for planes parallel to xy-plane
-slabs, horizontal_surface_planes = identify_slabs_from_point_cloud(points_xyz, points_rgb, bottom_floor_slab_thickness,
-                                                                   top_floor_ceiling_thickness, z_step=0.05,
-                                                                   pointcloud_resolution=pointcloud_resolution,
-                                                                   plot_segmented_plane=False)  # plot with open 3D
+slabs, horizontal_surface_planes = identify_slabs(points_xyz, points_rgb, bottom_floor_slab_thickness,
+                                                  top_floor_ceiling_thickness, z_step=0.05,
+                                                  pointcloud_resolution=pointcloud_resolution,
+                                                  plot_segmented_plane=False)  # plot with open 3D
 
 # merge_horizontal_pointclouds_in_storey(horizontal_surface_planes)
 pointcloud_storeys = split_pointcloud_to_storeys(points_xyz, slabs)
@@ -90,8 +90,10 @@ for i, storey_pointcloud in enumerate(pointcloud_storeys):
                       'height': wall_height})
 
         opening_widths, opening_heights, opening_types = detect_rectangular_openings(j + 1, translated_filtered_rotated_wall_groups[j],
-                                                                                             pointcloud_resolution,
-                                                                                             grid_coefficient)
+                                                                                     pointcloud_resolution, grid_coefficient,
+                                                                                     min_opening_width=0.4, min_opening_height=0.3,
+                                                                                     max_opening_aspect_ratio=4, door_z_min=0.1)
+
         # Temporary list to store openings for the current wall
         wall_openings = []
 
