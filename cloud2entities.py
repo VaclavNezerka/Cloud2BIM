@@ -9,20 +9,25 @@ e57_input = False
 e57_file_names = ["input_e57/multiple_floor.e57"]
 
 # xyz_filenames = ["input_xyz/06th.xyz", "input_xyz/07th.xyz"]
-# xyz_filenames = ["input_xyz/multiple_floor.xyz"]
-xyz_filenames = ["input_xyz/Zurich_dataset_synth3.xyz"]
+# xyz_filenames = ["input_xyz/new_data/multiple_floor.xyz"]
+# xyz_filenames = ["input_xyz/new_data/Test_room_initial_dataset_002.xyz"]
+# xyz_filenames = ["input_xyz/new_data/GraingerMuseum.xyz"]
+# xyz_filenames = ["input_xyz/new_data/Zurich_dataset_synth3_wall2_005.xyz"]
+# xyz_filenames = ["input_xyz/new_data/Zurich_dataset_synth3_005.xyz"]
+xyz_filenames = ["input_xyz/new_data/Zurich_dataset_synth3_005.xyz"]
 dilute_pointcloud = False
 dilution_factor = 10
 
 # input parameters for identification of elements
-pointcloud_resolution = 0.002
+pc_resolution = 0.002
 
-bottom_floor_slab_thickness = 0.2
-top_floor_ceiling_thickness = 0.05  # used if there is no slab in the point cloud for the uppermost floor
+# used if there is no slab in the point cloud for the bottom and uppermost floor
+bfs_thickness = 0.2  # bottom floor slab thickness
+tfc_thickness = 0.05  #top floor ceiling thickness
 
-minimum_wall_length = 0.2
-minimum_wall_thickness = 0.05
-maximum_wall_thickness = 0.6
+min_wall_length = 0.2
+min_wall_thickness = 0.05
+max_wall_thickness = 0.6
 
 # IFC model parameters
 ifc_output_file = 'output_IFC/output-2.ifc'
@@ -68,19 +73,20 @@ points_xyz = np.round(points_xyz, 3)  # round the xyz coordinates to 3 decimals
 last_time = log('All point cloud data imported.', last_time, log_filename)
 
 # scan the model along the z-coordinate and search for planes parallel to xy-plane
-slabs, horizontal_surface_planes = identify_slabs(points_xyz, points_rgb, bottom_floor_slab_thickness,
-                                                  top_floor_ceiling_thickness, z_step=0.05,
-                                                  pointcloud_resolution=pointcloud_resolution,
+slabs, horizontal_surface_planes = identify_slabs(points_xyz, points_rgb, bfs_thickness,
+                                                  tfc_thickness, z_step=0.05,
+                                                  pointcloud_resolution=pc_resolution,
                                                   plot_segmented_plane=False)  # plot with open 3D
 
 # merge_horizontal_pointclouds_in_storey(horizontal_surface_planes)
-pointcloud_storeys = split_pointcloud_to_storeys(points_xyz, slabs)
+point_cloud_storeys = split_pointcloud_to_storeys(points_xyz, slabs)
 walls = []
 all_openings = []
 id = 0
-for i, storey_pointcloud in enumerate(pointcloud_storeys):
-    start_points, end_points, wall_thicknesses, wall_materials, grid_coefficient, translated_filtered_rotated_wall_groups = identify_walls(storey_pointcloud, pointcloud_resolution, minimum_wall_length,
-                                                             minimum_wall_thickness, maximum_wall_thickness, i)
+for i, storey_pointcloud in enumerate(point_cloud_storeys):
+    (start_points, end_points, wall_thicknesses, wall_materials, grid_coefficient,
+     translated_filtered_rotated_wall_groups) = identify_walls(storey_pointcloud, pc_resolution, min_wall_length,
+                                                               min_wall_thickness, max_wall_thickness, i)
     z_placement = slabs[i]['slab_bottom_z_coord'] + slabs[i]['thickness']
     wall_height = slabs[i + 1]['slab_bottom_z_coord'] - z_placement
     for j in range(len(start_points)):
@@ -89,10 +95,10 @@ for i, storey_pointcloud in enumerate(pointcloud_storeys):
                       'thickness': wall_thicknesses[j], 'material': wall_materials[j], 'z_placement': z_placement,
                       'height': wall_height})
 
-        opening_widths, opening_heights, opening_types = detect_rectangular_openings(j + 1, translated_filtered_rotated_wall_groups[j],
-                                                                                     pointcloud_resolution, grid_coefficient,
-                                                                                     min_opening_width=0.4, min_opening_height=0.3,
-                                                                                     max_opening_aspect_ratio=4, door_z_min=0.1)
+        opening_widths, opening_heights, opening_types = identify_openings(j + 1, translated_filtered_rotated_wall_groups[j],
+                                                                           pc_resolution, grid_coefficient,
+                                                                           min_opening_width=0.4, min_opening_height=0.3,
+                                                                           max_opening_aspect_ratio=4, door_z_max=0.1)
 
         # Temporary list to store openings for the current wall
         wall_openings = []

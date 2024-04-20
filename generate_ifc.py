@@ -580,10 +580,10 @@ class IFCmodel:
         # Create an IfcShapeRepresentation for the opening
         opening_representation = self.ifc_file.create_entity(
             "IfcShapeRepresentation",
-            ContextOfItems=self.context,  # Replace with the appropriate context
+            ContextOfItems=self.context,
             RepresentationIdentifier='Body',
             RepresentationType='SweptSolid',
-            Items=[opening_extrusion_represent],  # Replace with the appropriate geometry items for the opening
+            Items=[opening_extrusion_represent],
         )
         return opening_representation
 
@@ -641,8 +641,8 @@ class IFCmodel:
             "IfcRelVoidsElement",
             GlobalId=ifcopenshell.guid.new(),
             OwnerHistory=self.owner_history,
-            Name=None,  # this corresponds to the "$" in your IFC code
-            Description=None,  # this corresponds to the "$" in your IFC code
+            Name=None,
+            Description=None,
             RelatingBuildingElement=relating_building_element,
             RelatedOpeningElement=related_opening_element
         )
