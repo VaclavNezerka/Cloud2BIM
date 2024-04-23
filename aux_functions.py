@@ -121,6 +121,29 @@ def create_hull_alphashape(points_3d, concavity_level=1.0):
     return x_coords, y_coords, polygon
 
 
+def smooth_contour(x_contour, y_contour, epsilon):
+    """
+    Smooths a contour using the Douglas-Peucker algorithm.
+
+    Parameters:
+        x_contour (ndarray): Array of x-coordinates of the contour.
+        y_contour (ndarray): Array of y-coordinates of the contour.
+        epsilon (float): Maximum distance for a point to be considered on the approximated line.
+
+    Returns:
+        ndarray: Smoothed x-coordinates of the contour.
+        ndarray: Smoothed y-coordinates of the contour.
+        ndarray: Smoothed contour as ndarray: (n, 2) (x and y)
+    """
+    points = np.column_stack((x_contour, y_contour)).astype(np.float32)
+    epsilon = epsilon * cv2.arcLength(points, True)
+    simplified_points = cv2.approxPolyDP(points, epsilon, True)
+    simplified_points = np.squeeze(simplified_points, axis=1)
+    x_smoothed = simplified_points[:, 0]
+    y_smoothed = simplified_points[:, 1]
+    return x_smoothed, y_smoothed, simplified_points
+
+
 def create_hull_from_histogram(points_3d, pointcloud_resolution, grid_coefficient, plot_contours,
                                dilation_meters, erosion_meters):
     # Project 3D points to 2D
@@ -183,7 +206,10 @@ def create_hull_from_histogram(points_3d, pointcloud_resolution, grid_coefficien
         ax.set_aspect('equal', 'box')
         plt.show()
 
-    return x_contour, y_contour, polygon
+    x_contour_smoothed, y_contour_smoothed, polygon_smothed = smooth_contour(x_contour, y_contour, epsilon=0.001)
+    plot_smoothed_contour(x_contour, y_contour, x_contour_smoothed, y_contour_smoothed)
+
+    return x_contour_smoothed, y_contour_smoothed, polygon_smothed
 
 
 def identify_slabs(points_xyz, points_rgb, bottom_floor_slab_thickness, top_floor_ceiling_thickness,
@@ -387,17 +413,7 @@ def random_color():
 
 
 def distance_point_to_line(point, line_start, line_end):
-    """
-    Calculate the distance from a single point to a line defined by two points.
-
-    Parameters:
-    - point: The point as [x, y].
-    - line_start: The starting point of the line [x, y].
-    - line_end: The ending point of the line [x, y].
-
-    Returns:
-    - The distance from the point to the line.
-    """
+    """Calculate the distance from a single point to a line defined by two points."""
 
     line_start = np.array(line_start)
     line_end = np.array(line_end)
@@ -429,6 +445,38 @@ def distance_point_to_line(point, line_start, line_end):
 
     return distance
 
+
+def distance_points_to_line_np(points, line_start, line_end):
+    """Calculate the distances from multiple points to a line defined by two points."""
+    line_start = np.array(line_start)
+    line_end = np.array(line_end)
+    points = np.array(points)
+
+    # Vector from line_start to line_end
+    line_vec = line_end - line_start
+
+    # Ensure the line has length to avoid division by zero
+    line_length = np.linalg.norm(line_vec)
+    if np.isclose(line_length, 0):
+        print("Warning: Line start and end points are the same. Returning NaN for all distances.")
+        return np.full(points.shape[0], np.nan)
+
+    # Normalize the line vector
+    line_vec_normalized = line_vec / line_length
+
+    # Vectors from line_start to each point
+    point_vecs = points - line_start
+
+    # Project each point_vec onto the line vector (dot product)
+    projections = np.dot(point_vecs, line_vec_normalized)
+
+    # Calculate the closest points on the line to each point
+    closest_points = line_start + projections[:, None] * line_vec_normalized
+
+    # Calculate and return the distances from each point to its closest point on the line
+    distances = np.linalg.norm(points - closest_points, axis=1)
+
+    return distances
 
 def distance_between_points(point1, point2):
     """Calculate the Euclidean distance between two points."""
@@ -664,6 +712,7 @@ def plot_parallel_groups(groups, wall_axes, binary_image, points_2d, x_min, x_ma
     ax.set_aspect('equal', 'box')
     fig.tight_layout()
     plt.savefig('images/walls_in_storey_%d.jpg' % (storey + 1), dpi=200)
+    plt.show()
     plt.close(fig)
 
 
@@ -708,13 +757,26 @@ def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minim
     # Find contours in the binary image
     print("Finding contours in the binary image")
     # contours, _ = cv2.findContours(binary_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # Find contours on the original binary image
     contours, _ = cv2.findContours(binary_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    # plot_contours(contours)
+
+    # Define the shift you want (e.g., 1 pixel up and 1 pixel right)
+    shift_x = 1  # positive for right
+    shift_y = 1  # negative for up
+
+    # Adjust the contour coordinates
+    adjusted_contours = []
+    for cnt in contours:
+        M = np.float32([[1, 0, shift_x], [0, 1, shift_y]])  # Transformation matrix
+        adjusted_cnt = cv2.transform(cnt, M)
+        adjusted_contours.append(adjusted_cnt)
+
+    plot_contours(adjusted_contours)
 
     # Extract all segments from contours
     print("Extracting all segments from contours")
     all_segments = []
-    for contour in contours:
+    for contour in adjusted_contours:
         all_segments.extend(get_line_segments(contour))
     # plot_segments_with_random_colors(all_segments)
 
@@ -745,7 +807,7 @@ def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minim
         wall_thicknesses.append(wall_thickness)
 
     wall_axes = adjust_wall_axes_for_intersections(wall_axes, maximum_wall_thickness)
-    plot_parallel_groups(parallel_groups, wall_axes, binary_image, points_2d, x_min, x_max, y_min, y_max, storey)
+    # plot_parallel_groups(parallel_groups, wall_axes, binary_image, points_2d, x_min, x_max, y_min, y_max, storey)
 
     start_points, end_points = zip(*wall_axes)
     wall_materials = ['Concrete'] * len(parallel_groups)
@@ -775,7 +837,7 @@ def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minim
     filtered_rotated_wall_groups = []
     idx = 0
     for wall_group, wall_thickness in zip(rotated_wall_groups, wall_thicknesses):
-        threshold = 0.5 * wall_thickness + 0.1 * wall_thickness
+        threshold = 0.5 * wall_thickness + 0.2 * wall_thickness
         filtered_wall_points = []
         for point in wall_group:
             if abs(point[1] - rotated_wall_axes[idx][0][1]) <= threshold:
@@ -853,37 +915,44 @@ def identify_floor_and_ceiling(points, point_cloud_resolution, min_distance=10, 
     return z_floor, z_ceiling
 
 
-def identify_wall_faces(wall_number, points, point_cloud_resolution, min_distance=3, plot_histograms_for_walls=True):
+def identify_wall_faces(wall_number, points, point_cloud_resolution, min_distance=3, plot_histograms_for_walls=False):
     """Identify the y-coordinates of the wall surfaces in the wall point cloud."""
 
-    # Extract z-coordinates
+    # Extract y-coordinates
     y_coords = [point[1] for point in points]
 
     # Generate bin edges based on the specified resolution
     y_min, y_max = min(y_coords), max(y_coords)
-    bin_edges = np.arange(y_min, y_max, point_cloud_resolution)
+    bin_edges = np.arange(y_min, y_max + point_cloud_resolution, point_cloud_resolution)
 
-    # Create a histogram of z-coordinates
-    hist, _ = np.histogram(y_coords, bins=bin_edges)
+    # Create a histogram of y-coordinates
+    hist, bin_edges = np.histogram(y_coords, bins=bin_edges)
 
     # Set the height threshold to a percentage of the maximum histogram value
     height_threshold = 0.3 * max(hist)
 
-    # plot_histogram_with_threshold(hist, height_threshold)
+    # Optional plotting of histogram
+    if plot_histograms_for_walls:
+        plot_histogram_with_threshold(hist, height_threshold)
 
     # Find peaks in the histogram
-    peaks, properties = find_peaks(hist, distance=min_distance, height=height_threshold,
-                                   prominence=0.25 * height_threshold)
-    print(peaks)
+    peaks, properties = find_peaks(hist, distance=min_distance, height=height_threshold, prominence=0.25 * height_threshold)
+    print("Peaks found at indices:", peaks)
 
     # Check if we have at least 2 peaks
-    if len(peaks) < 2:
-        print("Warning: Unable to identify both wall surfaces.")
-        return None, None
+    if len(peaks) >= 2:
+        y1 = (bin_edges[peaks[0]] + bin_edges[peaks[0] + 1]) / 2
+        y2 = (bin_edges[peaks[1]] + bin_edges[peaks[1] + 1]) / 2
+    else:
+        # If fewer than two peaks, take the highest points from the first and second halves of the histogram
+        half = len(hist) // 2
+        first_half_max_index = np.argmax(hist[:half])
+        second_half_max_index = np.argmax(hist[half:]) + half
+        y1 = (bin_edges[first_half_max_index] + bin_edges[first_half_max_index + 1]) / 2
+        y2 = (bin_edges[second_half_max_index] + bin_edges[second_half_max_index + 1]) / 2
+        print("No two distinct peaks found. Using highest points from histogram halves.")
 
-    # The lowest peak corresponds to the first wall face and the second one peak corresponds to the second wall face
-    y1 = bin_edges[peaks[0]]
-    y2 = bin_edges[peaks[-1]]
+    print("y1:", y1, "y2:", y2)
 
     # Plotting
     if plot_histograms_for_walls:
@@ -905,8 +974,7 @@ def identify_wall_faces(wall_number, points, point_cloud_resolution, min_distanc
 
 
 def distance_points_to_line(points, line_start, line_end):
-    """Vectorized calculation of distance from points to a line defined by two points using NumPy."""
-    """This function will calculate the perpendicular distance"""
+    """Calculation of perpendicular distance from points to a line defined by two points."""
     line_vec = np.array(line_end) - np.array(line_start)
     line_vec = line_vec / np.linalg.norm(line_vec)  # Normalize the line vector
     points = np.array(points) - np.array(line_start)  # Translate points based on line_start
@@ -917,7 +985,7 @@ def distance_points_to_line(points, line_start, line_end):
 
 
 def compute_wall_thickness(segment_group):
-    """Compute the thickness of the wall based on the perpendicular distance between two segments, optimized with NumPy."""
+    """Compute the thickness of the wall based on the perpendicular distance between two segments."""
     segments = np.array(segment_group)
     lengths = np.linalg.norm(segments[:, 0, :] - segments[:, 1, :], axis=1)
     longest_indices = np.argsort(lengths)[-2:]
@@ -927,19 +995,34 @@ def compute_wall_thickness(segment_group):
 
 
 def assign_points_to_walls(x_coords, y_coords, z_coords, wall_axes, parallel_groups, z_floor, z_ceiling):
+    # Stack coordinates into a single array
     points = np.vstack([x_coords, y_coords, z_coords]).T
+
+    # Compute wall thicknesses using a vectorized approach if possible
     wall_thicknesses = np.array([compute_wall_thickness(group) for group in parallel_groups])
+    acceptable_distances = 0.5 * wall_thicknesses + 0.2 * wall_thicknesses
 
-    wall_groups = [[] for _ in wall_axes]
-    for point in tqdm(points):
-        if not (z_floor < point[2] < z_ceiling):
-            continue
+    # Filter points by z-coordinates first to reduce computations
+    valid_z_mask = (z_floor < z_coords) & (z_coords < z_ceiling)
+    valid_points = points[valid_z_mask]
 
-        distances = np.array(
-            [distance_points_to_line([point[:2]], np.array(axis[0]), np.array(axis[1]))[0] for axis in wall_axes])
-        acceptable_distances = 0.5 * wall_thicknesses + 0.2 * wall_thicknesses
-        min_dist_idx = np.argmin(distances)
-        if distances[min_dist_idx] <= acceptable_distances[min_dist_idx]:
+    # Precompute line start and end arrays for vectorized distance calculations
+    line_starts = np.array([axis[0] for axis in wall_axes])
+    line_ends = np.array([axis[1] for axis in wall_axes])
+
+    # Calculate distances for all points to each wall axis in a vectorized manner
+    all_distances = np.array(
+        [distance_points_to_line_np(valid_points[:, :2], start, end) for start, end in zip(line_starts, line_ends)])
+
+    # Determine the closest wall for each point
+    min_distances = np.min(all_distances, axis=0)
+    min_distance_indices = np.argmin(all_distances, axis=0)
+
+    # Group points based on their closest wall
+    wall_groups = [[] for _ in range(len(wall_axes))]
+    for idx, point in enumerate(valid_points):
+        min_dist_idx = min_distance_indices[idx]
+        if min_distances[idx] <= acceptable_distances[min_dist_idx]:
             wall_groups[min_dist_idx].append(point.tolist())
 
     return wall_groups, wall_thicknesses
@@ -1013,7 +1096,7 @@ def export_wall_points_to_txt(wall_groups, output_dir="walls_outputs_txt"):
 
 
 def identify_openings(wall_number, wall_points, resolution, grid_roughness,
-                      histogram_threshold=0.7, thickness_for_extraction=0.03, min_opening_width=0.3,
+                      histogram_threshold=0.7, thickness_for_extraction=0.01, min_opening_width=0.3,
                       min_opening_height=0.3, max_opening_aspect_ratio=4, door_z_max=0.1,
                       plot_histograms_for_openings=False):
     """Detect rectangular openings (windows and doors) in the wall."""

@@ -13,8 +13,8 @@ e57_file_names = ["input_e57/multiple_floor.e57"]
 # xyz_filenames = ["input_xyz/new_data/Test_room_initial_dataset_002.xyz"]
 # xyz_filenames = ["input_xyz/new_data/GraingerMuseum.xyz"]
 # xyz_filenames = ["input_xyz/new_data/Zurich_dataset_synth3_wall2_005.xyz"]
-# xyz_filenames = ["input_xyz/new_data/Zurich_dataset_synth3_005.xyz"]
 xyz_filenames = ["input_xyz/new_data/Zurich_dataset_synth3_005.xyz"]
+# xyz_filenames = ["input_xyz/new_data/Vienna_rummelhartgasse_corner_005.xyz"]
 dilute_pointcloud = False
 dilution_factor = 10
 
