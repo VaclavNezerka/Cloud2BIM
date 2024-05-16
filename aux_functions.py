@@ -10,7 +10,7 @@ from tqdm import tqdm
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-from skimage.morphology import closing, square
+from skimage.morphology import closing, square, disk
 import cv2
 import random
 import math
@@ -168,8 +168,10 @@ def create_hull_from_histogram(points_3d, pointcloud_resolution, grid_coefficien
     # Create 2D histogram and mask
     histogram, _, _ = np.histogram2d(points_2d[:, 0], points_2d[:, 1], bins=(x_edges, y_edges))
     mask = histogram.T > 0  # Threshold to create mask, transposed for correct orientation
+    if plot_contours:
+        plot_2d_histogram(mask, x_edges, y_edges)
 
-    # Apply morphological operations
+    # Apply morphological operation
     kernel = np.ones((dilation_kernel_size, dilation_kernel_size), np.uint8)
     mask_dilated = cv2.dilate(mask.astype(np.uint8), kernel, iterations=1)
     kernel = np.ones((erosion_kernel_size, erosion_kernel_size), np.uint8)
@@ -177,43 +179,34 @@ def create_hull_from_histogram(points_3d, pointcloud_resolution, grid_coefficien
 
     # Shift the mask for more accurate contours
     shifted_mask = np.roll(mask_eroded, (-1, -1), axis=(0, 1))
+    if plot_contours:
+        plot_shifted_mask(shifted_mask, x_edges, y_edges)
 
     # Find contours on the eroded mask for correct orientation
     contours, hierarchy = cv2.findContours(shifted_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     largest_contour = max(contours, key=cv2.contourArea)
-
-    # Plotting
-    if plot_contours:
-        fig, ax = plt.subplots()
-        ax.imshow(mask, origin='lower', extent=[x_min_extended, x_max_extended, y_min_extended, y_max_extended],
-                  cmap='Greys', alpha=0.5)
-        ax.scatter(points_2d[:, 0], points_2d[:, 1], s=1, color='blue')
 
     # Adjust contour scaling
     contour = np.squeeze(largest_contour, axis=1)  # Remove redundant dimension
     # Adjusting scaling to fully cover the bin extents
     contour_scaled = (contour + 0.5) * pixel_size + [x_min_extended,
                                                      y_min_extended]  # Add 0.5 to shift to the center of the bin
-    polygon = Polygon(contour_scaled, fill=None, edgecolor='red')
-    if plot_contours:
-        ax.add_patch(polygon)
+    # Adjusting scaling to the original domain
+    polygon = Polygon(contour_scaled, fill=None, edgecolor='blue')
     x_contour = contour_scaled[:, 0].flatten()
     y_contour = contour_scaled[:, 1].flatten()
 
+    # Smooth the contour
+    x_contour_smoothed, y_contour_smoothed, simplified_points = smooth_contour(x_contour, y_contour, epsilon=0.0005)
+    polygon_smoothed = Polygon(simplified_points, fill=None, edgecolor='red')
     if plot_contours:
-        ax.set_xlim([x_min_extended, x_max_extended])
-        ax.set_ylim([y_min_extended, y_max_extended])
-        ax.set_aspect('equal', 'box')
-        plt.show()
+        plot_smoothed_contour(polygon, polygon_smoothed)
 
-    x_contour_smoothed, y_contour_smoothed, polygon_smothed = smooth_contour(x_contour, y_contour, epsilon=0.001)
-    plot_smoothed_contour(x_contour, y_contour, x_contour_smoothed, y_contour_smoothed)
-
-    return x_contour_smoothed, y_contour_smoothed, polygon_smothed
+    return x_contour_smoothed, y_contour_smoothed, polygon_smoothed
 
 
 def identify_slabs(points_xyz, points_rgb, bottom_floor_slab_thickness, top_floor_ceiling_thickness,
-                   z_step, pointcloud_resolution, plot_segmented_plane=False):
+                   z_step, pc_resolution, plot_segmented_plane=False):
     z_min, z_max = min(points_xyz[:, 2]), max(points_xyz[:, 2])
     n_steps = int((z_max - z_min) / z_step + 1)
     z_array, n_points_array = [], []
@@ -223,6 +216,8 @@ def identify_slabs(points_xyz, points_rgb, bottom_floor_slab_thickness, top_floo
         z_array.append(z)
         n_points_array.append(len(idx_selected_xyz))
     max_n_points_array = 0.5 * max(n_points_array)
+
+    # plot_point_cloud_data(points_xyz, n_points_array, z_array, max_n_points_array, z_step)
 
     # Histogram plotting
     plt.plot(np.array(n_points_array) / 1000, z_array, '-r', linewidth=0.8)
@@ -234,9 +229,24 @@ def identify_slabs(points_xyz, points_rgb, bottom_floor_slab_thickness, top_floo
     # extract z-coordinates where the density of points (indicated by a high value on the histogram) exceeds 50%
     # of a maximum -> horiz_surface candidates
     h_surf_candidates = []
+    start = None
     for i in range(len(n_points_array)):
         if n_points_array[i] > max_n_points_array:
-            h_surf_candidates.append([z_array[i], z_array[i] + z_step])
+            if start is None:
+                start = i
+        elif start is not None:
+            h_surf_candidates.append([z_array[start], z_array[i - 1] + z_step])
+            start = None
+
+    if start is not None:
+        h_surf_candidates.append([z_array[start], z_array[-1] + z_step])
+
+    merged_candidates = []
+    for interval in h_surf_candidates:
+        if len(merged_candidates) == 0 or interval[0] > merged_candidates[-1][1]:
+            merged_candidates.append(interval)
+        else:
+            merged_candidates[-1][1] = interval[1]
 
     horiz_surface_planes, horiz_surface_colors, horiz_surface_polygon, horiz_surface_polygon_x, \
         horiz_surface_polygon_y, horiz_surface_z, horiz_surface_thickness = [], [], [], [], [], [], []
@@ -250,6 +260,8 @@ def identify_slabs(points_xyz, points_rgb, bottom_floor_slab_thickness, top_floo
         horiz_surface_planes.append(points_xyz[horiz_surface_idx])
         horiz_surface_colors.append(points_rgb[horiz_surface_idx] / 255)
 
+    # plot_horizontal_surfaces(horiz_surface_planes)
+
     # merge lower and upper surface of each horiz_surface and create a hull
     slabs = []
     for i in range(len(h_surf_candidates)):
@@ -258,7 +270,7 @@ def identify_slabs(points_xyz, points_rgb, bottom_floor_slab_thickness, top_floo
             slab_top_z_coord = np.median(horiz_surface_planes[i][:, 2])
             slab_bottom_z_coord = slab_top_z_coord - bottom_floor_slab_thickness
             # x_coords, y_coords, polygon = create_hull_alphashape(slab_points, concavity_level=0.0)  # 0.0 -> convex
-            x_coords, y_coords, polygon = create_hull_from_histogram(horiz_surface_planes[i], pointcloud_resolution,
+            x_coords, y_coords, polygon = create_hull_from_histogram(horiz_surface_planes[i], pc_resolution,
                                                                      grid_coefficient=5, plot_contours=False,
                                                                      dilation_meters=0.5, erosion_meters=0.5)
             slabs.append({'polygon': polygon, 'polygon_x_coords': x_coords, 'polygon_y_coords': y_coords,
@@ -275,9 +287,9 @@ def identify_slabs(points_xyz, points_rgb, bottom_floor_slab_thickness, top_floo
 
             # create hull for the slab
             # x_coords, y_coords, polygon = create_hull_alphashape(slab_points, concavity_level=0.0)  # 0.0 -> convex
-            x_coords, y_coords, polygon = create_hull_from_histogram(slab_points, pointcloud_resolution,
+            x_coords, y_coords, polygon = create_hull_from_histogram(slab_points, pc_resolution,
                                                                      grid_coefficient=5, plot_contours=False,
-                                                                     dilation_meters=0.5, erosion_meters=0.5)
+                                                                     dilation_meters=1.2, erosion_meters=1.2)
             slabs.append({'polygon': polygon, 'polygon_x_coords': x_coords, 'polygon_y_coords': y_coords,
                           'slab_bottom_z_coord': slab_bottom_z_coord, 'thickness': slab_thickness})
             print('Slab no. %d: bottom (z-coordinate) = %.3f m, thickness = %0.1f mm'
@@ -289,9 +301,9 @@ def identify_slabs(points_xyz, points_rgb, bottom_floor_slab_thickness, top_floo
 
             # create hull for the slab
             # x_coords, y_coords, polygon = create_hull_alphashape(slab_points, concavity_level=0.0)  # 0.0 -> convex
-            x_coords, y_coords, polygon = create_hull_from_histogram(horiz_surface_planes[i], pointcloud_resolution,
-                                                                     grid_coefficient=5, plot_contours=True,
-                                                                     dilation_meters=0.5, erosion_meters=0.5)
+            x_coords, y_coords, polygon = create_hull_from_histogram(horiz_surface_planes[i], pc_resolution,
+                                                                     grid_coefficient=5, plot_contours=False,
+                                                                     dilation_meters=0.6, erosion_meters=0.6)
             slabs.append({'polygon': polygon, 'polygon_x_coords': x_coords, 'polygon_y_coords': y_coords,
                           'slab_bottom_z_coord': slab_bottom_z_coord, 'thickness': top_floor_ceiling_thickness})
             print('Slab no. %d: bottom (z-coordinate) = %.3f m, thickness = %0.1f mm'
@@ -372,11 +384,10 @@ def display_cross_section_plot(segmented_pointclouds_3d, slabs):
         plt.plot([min_x - 1, max_x + 1], [bottom_z, bottom_z], 'r--')
         plt.plot([min_x - 1, max_x + 1], [top_z, top_z], 'b--')
 
-    plt.xlabel('X')
-    plt.ylabel('Z')
-    plt.title('X-Z Cross-Section of Point Cloud')
-    plt.legend()
-    plt.grid(True)
+    plt.xlabel('X-coordinate (m)')
+    plt.ylabel('Z-coordinate (m)')
+    plt.legend('Cross Section')
+    plt.grid(False)
     plt.axis('equal')
     plt.show()
 
@@ -396,14 +407,16 @@ def save_coordinates_to_xyz(coordinates_list, base_filename):
 
 
 # Functions used for identification of walls
+
 # Define a function to get line segments from a contour using Douglas-Peucker algorithm
-def get_line_segments(contour, epsilon_factor=0.01):
-    epsilon = epsilon_factor * cv2.arcLength(contour, True)
+def get_line_segments(contour, pixel_size, segment_approximation_tolerance=0.02):
+    epsilon = segment_approximation_tolerance / pixel_size
     approx = cv2.approxPolyDP(contour, epsilon, True)
     segments = []
     for i in range(len(approx)):
         segment = [tuple(approx[i - 1][0]), tuple(approx[i][0])]
         segments.append(segment)
+
     return segments
 
 
@@ -447,36 +460,31 @@ def distance_point_to_line(point, line_start, line_end):
 
 
 def distance_points_to_line_np(points, line_start, line_end):
-    """Calculate the distances from multiple points to a line defined by two points."""
-    line_start = np.array(line_start)
-    line_end = np.array(line_end)
-    points = np.array(points)
+    """Calculate the Euclidean distances from multiple points to a line defined by two points."""
+    points = np.asarray(points)
+    line_start = np.asarray(line_start)
+    line_end = np.asarray(line_end)
 
-    # Vector from line_start to line_end
     line_vec = line_end - line_start
-
-    # Ensure the line has length to avoid division by zero
     line_length = np.linalg.norm(line_vec)
+
     if np.isclose(line_length, 0):
-        print("Warning: Line start and end points are the same. Returning NaN for all distances.")
         return np.full(points.shape[0], np.nan)
 
-    # Normalize the line vector
     line_vec_normalized = line_vec / line_length
-
-    # Vectors from line_start to each point
     point_vecs = points - line_start
-
-    # Project each point_vec onto the line vector (dot product)
     projections = np.dot(point_vecs, line_vec_normalized)
 
-    # Calculate the closest points on the line to each point
-    closest_points = line_start + projections[:, None] * line_vec_normalized
+    on_segment = (projections >= 0) & (projections <= line_length)
+    closest_points = np.outer(projections, line_vec_normalized) + line_start
+    perpendicular_distances = np.linalg.norm(points - closest_points, axis=1)
 
-    # Calculate and return the distances from each point to its closest point on the line
-    distances = np.linalg.norm(points - closest_points, axis=1)
+    distances_to_start = np.linalg.norm(points - line_start, axis=1)
+    distances_to_end = np.linalg.norm(points - line_end, axis=1)
+    distances = np.where(on_segment, perpendicular_distances, np.minimum(distances_to_start, distances_to_end))
 
     return distances
+
 
 def distance_between_points(point1, point2):
     """Calculate the Euclidean distance between two points."""
@@ -492,7 +500,7 @@ def merge_segments(seg1, seg2):
     return [sorted_points[0], sorted_points[-1]]
 
 
-def segments_within_tolerance_for_merge_corrected(seg1, seg2, max_thickness, max_distance):
+def segments_within_tolerance_for_merge_corrected(seg1, seg2, min_thickness, max_distance):
     """Check if two segments are candidates for merging."""
     # Check if the segments are close enough to merge based on maximum wall thickness
     close_enough = any(
@@ -500,32 +508,56 @@ def segments_within_tolerance_for_merge_corrected(seg1, seg2, max_thickness, max
     )
 
     # Check if the segments are co-linear
-    colinear = all(
-        distance_point_to_line(point, seg1[0], seg1[1]) < max_thickness for point in seg2
+    colinear = any(
+        distance_point_to_line(point, seg1[0], seg1[1]) < min_thickness for point in seg2
     )
 
     return close_enough and colinear
 
 
-def merge_colinear_segments_updated(segments, max_thickness, max_distance):
+def find_furthest_points(all_points):
+    def distance(point1, point2):
+        return math.sqrt((point2[0] - point1[0]) ** 2 + (point2[1] - point1[1]) ** 2)
+
+    max_distance = -1
+    start_point = None
+    end_point = None
+
+    # Iterate through each pair of points to find the furthest pair
+    for i in range(len(all_points)):
+        for j in range(i + 1, len(all_points)):
+            dist = distance(all_points[i], all_points[j])
+            if dist > max_distance:
+                max_distance = dist
+                start_point = all_points[i]
+                end_point = all_points[j]
+
+    return start_point, end_point
+
+
+def merge_colinear_segments_updated(segments, min_thickness, max_distance):
     """Merge co-linear segments from the given list using the direct approach we tested."""
     final_segments = []
-
+    counter = 0
     while segments:
+        counter += 1
         base_segment = segments[0]
         to_merge = [base_segment]
 
         for other_segment in segments[1:]:
-            if segments_within_tolerance_for_merge_corrected(base_segment, other_segment, max_thickness, max_distance):
+            if (segments_within_tolerance_for_merge_corrected(base_segment, other_segment, min_thickness, max_distance)
+                    and segments_are_parallel(base_segment, other_segment, angle_tolerance=3)):
                 to_merge.append(other_segment)
 
         # Merge all the segments in to_merge into a single segment
-        all_points = [point for seg in to_merge for point in seg]
-        sorted_points = sorted(all_points, key=lambda p: (p[0], p[1]))
-        merged_segment = [sorted_points[0], sorted_points[-1]]
-        final_segments.append(merged_segment)
+        if len(to_merge) > 1:
+            all_points = [point for seg in to_merge for point in seg]
+            start, end = find_furthest_points(all_points)
+            merged_segment = [start, end]
+            segments.append(merged_segment)
+        else:
+            final_segments.append(base_segment)
 
-        # Remove segments that have been merged
         for seg in to_merge:
             segments.remove(seg)
 
@@ -553,7 +585,7 @@ def angle_between_segments(seg1, seg2):
     return angle_deg
 
 
-def segments_are_parallel(seg1, seg2, angle_tolerance=1):
+def segments_are_parallel(seg1, seg2, angle_tolerance=3):
     """Check if two segments are approximately parallel within a given angle tolerance (in degrees)."""
     angle = angle_between_segments(seg1, seg2)
     return abs(angle) < angle_tolerance or abs(angle - 180) < angle_tolerance
@@ -567,9 +599,53 @@ def perpendicular_distance_between_segments(seg1, seg2):
         return float('inf')
 
 
+def check_overlap_parallel_segments(seg1, seg2, min_overlap):
+    def calculate_angle(p1, p2):
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
+        return math.atan2(dy, dx)
+
+    def rotate_point(point, angle):
+        rotation_matrix = np.array([
+            [np.cos(angle), -np.sin(angle)],
+            [np.sin(angle), np.cos(angle)]
+        ])
+        return np.dot(rotation_matrix, np.array([point[0], point[1]]))
+
+    def process_and_rotate_segments(seg1, seg2, angle):
+        return [
+            [rotate_point(seg1[0], -angle), rotate_point(seg1[1], -angle)],
+            [rotate_point(seg2[0], -angle), rotate_point(seg2[1], -angle)]
+        ]
+
+    def find_x_axis_overlap(rot_seg1, rot_seg2):
+        x1_min, x1_max = sorted([rot_seg1[0][0], rot_seg1[1][0]])
+        x2_min, x2_max = sorted([rot_seg2[0][0], rot_seg2[1][0]])
+        start = max(x1_min, x2_min)
+        end = min(x1_max, x2_max)
+        return (start, end) if start < end else None
+
+    def calculate_overlap_length(overlap):
+        return overlap[1] - overlap[0] if overlap else 0
+
+    # Calculate the rotation angle for the first segment to align with the x-axis
+    angle = calculate_angle(seg1[0], seg1[1])
+
+    # Rotate both segments using the calculated angle
+    rotated_seg1, rotated_seg2 = process_and_rotate_segments(seg1, seg2, angle)
+
+    # Find overlap along the x-axis
+    overlap = find_x_axis_overlap(rotated_seg1, rotated_seg2)
+    overlap_length = calculate_overlap_length(overlap)
+
+    # Check if the overlap length meets the minimum requirement
+    return overlap_length > min_overlap
+
+
 def group_segments(segments, min_wall_thickness, max_wall_thickness, angle_tolerance=1):
     """Group segments that are parallel with a small tolerance."""
     grouped = []
+    facade_wall_candidate = []  # List to hold segments that aren't grouped
 
     while segments:
         current_segment = segments.pop(0)
@@ -578,22 +654,25 @@ def group_segments(segments, min_wall_thickness, max_wall_thickness, angle_toler
         i = 0
         while i < len(segments):
             segment = segments[i]
-            if segments_are_parallel(current_segment, segment, angle_tolerance):
-                min_distance = min(perpendicular_distance_between_segments(current_segment, segment),
-                                   perpendicular_distance_between_segments(segment, current_segment))
-                if min_wall_thickness < min_distance < max_wall_thickness:
-                    parallel_group.append(segment)
-                    segments.pop(i)
-                else:
-                    i += 1
+            if (
+                    segments_are_parallel(current_segment, segment, angle_tolerance) and
+                    any(distance_between_points(p1, p2) <= max_wall_thickness for p1 in current_segment for p2 in
+                        segment) and
+                    check_overlap_parallel_segments(current_segment, segment, min_overlap=max_wall_thickness)
+            ):
+                parallel_group.append(segment)
+                segments.pop(i)
             else:
                 i += 1
 
         # Save only the groups consisting of two or more segments
         if len(parallel_group) >= 2:
             grouped.append(parallel_group)
+        else:
+            facade_wall_candidate.append(current_segment)
+    print(facade_wall_candidate)
 
-    return grouped
+    return grouped, facade_wall_candidate
 
 
 def calculate_wall_axis(group):
@@ -712,15 +791,13 @@ def plot_parallel_groups(groups, wall_axes, binary_image, points_2d, x_min, x_ma
     ax.set_aspect('equal', 'box')
     fig.tight_layout()
     plt.savefig('images/walls_in_storey_%d.jpg' % (storey + 1), dpi=200)
-    plt.show()
     plt.close(fig)
 
 
 def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minimum_wall_thickness,
-                   maximum_wall_thickness, storey):
+                   maximum_wall_thickness, grid_coefficient=5):
     x_coords, y_coords, z_coords = zip(*pointcloud)
     z_section_boundaries = [0.9, 1.0]  # percentage of the height for the storey sections
-    grid_coefficient = 5  # computational grid size (multiplies the point_cloud_resolution)
 
     # Calculate z-coordinate limits
     z_max_in_point_cloud = np.max(z_coords)
@@ -741,24 +818,28 @@ def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minim
     y_values_full = np.arange(y_min + 0.5 * pixel_size, y_max, pixel_size)
     grid_full, _, _ = np.histogram2d(points_2d[:, 0], points_2d[:, 1], bins=[x_values_full, y_values_full])
     grid_full = grid_full.T
-    # plot_histogram(grid_full, x_values_full, y_values_full)
 
     # Convert the 2D histogram to binary (mask) based on a threshold
     threshold = 0.01
     print("Converting the 2D histogram to binary (mask) based on a threshold")
+    grid_full_blurred = cv2.GaussianBlur(grid_full, (3, 3), 0)
+    plot_histogram(grid_full, x_values_full, y_values_full)
+
     binary_image = (grid_full > threshold).astype(np.uint8) * 255
-    # plot_binary_image(binary_image)
+    plot_binary_image(binary_image)
 
     # Pre-process the binary image
     print("Pre-processing the binary image")
-    binary_image = closing(binary_image, square(6))  # closes small holes in the binary mask
-    # plot_binary_image(binary_image)
+    binary_image = closing(binary_image, square(4))  # closes small holes in the binary mask
+    plot_binary_image(binary_image)
 
     # Find contours in the binary image
     print("Finding contours in the binary image")
     # contours, _ = cv2.findContours(binary_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     # Find contours on the original binary image
     contours, _ = cv2.findContours(binary_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    # save_ndarray(contours, "saved_variables/contours.npy")
+    # contours_saved = load_ndarray("saved_variables/contours.npy")
 
     # Define the shift you want (e.g., 1 pixel up and 1 pixel right)
     shift_x = 1  # positive for right
@@ -772,13 +853,14 @@ def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minim
         adjusted_contours.append(adjusted_cnt)
 
     plot_contours(adjusted_contours)
+    plot_contours(contours)
 
     # Extract all segments from contours
     print("Extracting all segments from contours")
     all_segments = []
     for contour in adjusted_contours:
-        all_segments.extend(get_line_segments(contour))
-    # plot_segments_with_random_colors(all_segments)
+        all_segments.extend(get_line_segments(contour, pixel_size,
+                                              segment_approximation_tolerance=grid_coefficient*pointcloud_resolution))
 
     # Convert pixel-based segment coordinates to real-world coordinates
     print("Converting pixel-based segment coordinates to real-world coordinates")
@@ -789,16 +871,21 @@ def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minim
     print("Filtering out segments shorter than the given threshold")
     filtered_segments = [
         segment for segment in segments_in_world_coords
-        if distance_between_points(segment[0], segment[1]) >= minimum_wall_length]
-    # plot_segments_with_random_colors(filtered_segments)
+        if distance_between_points(segment[0], segment[1]) >= 0.5 * minimum_wall_length]
+    plot_segments_with_random_colors(filtered_segments, name="Filtered wall segments")
 
     # Merge the co-linear segments using the updated function
     print("Merging the co-linear segments using the updated function")
     final_wall_segments = merge_colinear_segments_updated(filtered_segments.copy(), minimum_wall_thickness,
                                                           maximum_wall_thickness)
+    plot_segments_with_random_colors(final_wall_segments, name="Final wall segments")
+
     # Group parallel segments
     print("Grouping parallel segments")
-    parallel_groups = group_segments(final_wall_segments, minimum_wall_thickness, maximum_wall_thickness)
+    parallel_groups, facade_wall_candidates = group_segments(final_wall_segments, minimum_wall_thickness,
+                                                             maximum_wall_thickness)
+    plot_parallel_groups2(parallel_groups)
+    plot_segments_with_candidates(facade_wall_candidates)
 
     wall_axes, wall_thicknesses = [], []
     for group in parallel_groups:
@@ -861,11 +948,10 @@ def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minim
         translated_filtered_rotated_wall_groups.append(translated_wall)
         # plot_wall(translated_wall, wall_thicknesses[idx], idx+1)
 
-    return (start_points, end_points, wall_thicknesses, wall_materials, grid_coefficient,
-            translated_filtered_rotated_wall_groups)
+    return start_points, end_points, wall_thicknesses, wall_materials, translated_filtered_rotated_wall_groups
 
 
-def identify_floor_and_ceiling(points, point_cloud_resolution, min_distance=10, plot_histograms_for_floors=False):
+def identify_floor_and_ceiling(points, point_cloud_resolution, min_distance=2, plot_histograms_for_floors=False):
     """Identify the z-coordinates of the floor and ceiling surfaces in the wall point cloud."""
 
     # Extract z-coordinates
@@ -915,7 +1001,7 @@ def identify_floor_and_ceiling(points, point_cloud_resolution, min_distance=10, 
     return z_floor, z_ceiling
 
 
-def identify_wall_faces(wall_number, points, point_cloud_resolution, min_distance=3, plot_histograms_for_walls=False):
+def identify_wall_faces(wall_number, points, point_cloud_resolution, min_distance=25, plot_histograms_for_walls=False):
     """Identify the y-coordinates of the wall surfaces in the wall point cloud."""
 
     # Extract y-coordinates
@@ -1096,7 +1182,7 @@ def export_wall_points_to_txt(wall_groups, output_dir="walls_outputs_txt"):
 
 
 def identify_openings(wall_number, wall_points, resolution, grid_roughness,
-                      histogram_threshold=0.7, thickness_for_extraction=0.01, min_opening_width=0.3,
+                      histogram_threshold=0.7, thickness_for_extraction=0.03, min_opening_width=0.3,
                       min_opening_height=0.3, max_opening_aspect_ratio=4, door_z_max=0.1,
                       plot_histograms_for_openings=False):
     """Detect rectangular openings (windows and doors) in the wall."""
@@ -1122,7 +1208,11 @@ def identify_openings(wall_number, wall_points, resolution, grid_roughness,
         z_bins = int((z_max - z_min) / (resolution * grid_roughness))
 
         # Define a threshold to decide if a bin contains an opening or not
-        max10 = sorted(hist, reverse=True)[10]  # find the tenth maximum from the histogram
+        if len(hist) > 10:
+            max10 = sorted(hist, reverse=True)[10]  # find the tenth maximum from the histogram
+        else:
+            max10 = hist[-1]
+
         x_threshold = max10 * histogram_threshold
 
         # Identify start and end of openings

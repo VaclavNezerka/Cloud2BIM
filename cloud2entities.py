@@ -11,23 +11,30 @@ e57_file_names = ["input_e57/multiple_floor.e57"]
 # xyz_filenames = ["input_xyz/06th.xyz", "input_xyz/07th.xyz"]
 # xyz_filenames = ["input_xyz/new_data/multiple_floor.xyz"]
 # xyz_filenames = ["input_xyz/new_data/Test_room_initial_dataset_002.xyz"]
-# xyz_filenames = ["input_xyz/new_data/GraingerMuseum.xyz"]
-# xyz_filenames = ["input_xyz/new_data/Zurich_dataset_synth3_wall2_005.xyz"]
-xyz_filenames = ["input_xyz/new_data/Zurich_dataset_synth3_005.xyz"]
+# xyz_filenames = ["input_xyz/new_data/Zurich_dataset_synth3_segmnet_merge_bug_01.xyz"]
+xyz_filenames = ["input_xyz/new_data/Zurich_dataset_synth3_01.xyz"]
 # xyz_filenames = ["input_xyz/new_data/Vienna_rummelhartgasse_corner_005.xyz"]
+# xyz_filenames = ["input_xyz/new_data/Zurich_dataset_synth2_002.xyz"]
+# xyz_filenames = ["input_xyz/new_data/Opatov_19th_half_01.xyz"]
+# xyz_filenames = ["input_xyz/new_data/Alserstrase_2nd_floor_01.xyz"]
+# xyz_filenames = ["input_xyz/new_data/Kladno_station_floor.xyz"]
+# xyz_filenames = ["input_xyz/new_data/Kladno_station_floor_no_exterior.xyz"]
+# xyz_filenames = ["input_xyz/new_data/Kladno_station_bug_segments.xyz"]
+# xyz_filenames = ["input_xyz/new_data/Opatov_2_rooms.xyz"]
 dilute_pointcloud = False
 dilution_factor = 10
 
 # input parameters for identification of elements
 pc_resolution = 0.002
+grid_coefficient = 5  # computational grid size (multiplies the point_cloud_resolution)
 
 # used if there is no slab in the point cloud for the bottom and uppermost floor
 bfs_thickness = 0.2  # bottom floor slab thickness
 tfc_thickness = 0.05  #top floor ceiling thickness
 
-min_wall_length = 0.2
+min_wall_length = 0.1
 min_wall_thickness = 0.05
-max_wall_thickness = 0.6
+max_wall_thickness = 0.65
 
 # IFC model parameters
 ifc_output_file = 'output_IFC/output-2.ifc'
@@ -75,18 +82,19 @@ last_time = log('All point cloud data imported.', last_time, log_filename)
 # scan the model along the z-coordinate and search for planes parallel to xy-plane
 slabs, horizontal_surface_planes = identify_slabs(points_xyz, points_rgb, bfs_thickness,
                                                   tfc_thickness, z_step=0.05,
-                                                  pointcloud_resolution=pc_resolution,
+                                                  pc_resolution=pc_resolution,
                                                   plot_segmented_plane=False)  # plot with open 3D
 
 # merge_horizontal_pointclouds_in_storey(horizontal_surface_planes)
 point_cloud_storeys = split_pointcloud_to_storeys(points_xyz, slabs)
+# display_cross_section_plot(point_cloud_storeys, slabs)
 walls = []
 all_openings = []
 id = 0
 for i, storey_pointcloud in enumerate(point_cloud_storeys):
-    (start_points, end_points, wall_thicknesses, wall_materials, grid_coefficient,
+    (start_points, end_points, wall_thicknesses, wall_materials,
      translated_filtered_rotated_wall_groups) = identify_walls(storey_pointcloud, pc_resolution, min_wall_length,
-                                                               min_wall_thickness, max_wall_thickness, i)
+                                                               min_wall_thickness, max_wall_thickness, grid_coefficient)
     z_placement = slabs[i]['slab_bottom_z_coord'] + slabs[i]['thickness']
     wall_height = slabs[i + 1]['slab_bottom_z_coord'] - z_placement
     for j in range(len(start_points)):
