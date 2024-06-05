@@ -272,7 +272,7 @@ def identify_slabs(points_xyz, points_rgb, bottom_floor_slab_thickness, top_floo
             # x_coords, y_coords, polygon = create_hull_alphashape(slab_points, concavity_level=0.0)  # 0.0 -> convex
             x_coords, y_coords, polygon = create_hull_from_histogram(horiz_surface_planes[i], pc_resolution,
                                                                      grid_coefficient=5, plot_contours=False,
-                                                                     dilation_meters=0.5, erosion_meters=0.5)
+                                                                     dilation_meters=1.0, erosion_meters=1.0)
             slabs.append({'polygon': polygon, 'polygon_x_coords': x_coords, 'polygon_y_coords': y_coords,
                           'slab_bottom_z_coord': slab_bottom_z_coord, 'thickness': bottom_floor_slab_thickness})
             print('Slab no. %d: bottom (z-coordinate) = %.3f m, thickness = %0.1f mm'
@@ -410,7 +410,8 @@ def save_coordinates_to_xyz(coordinates_list, base_filename):
 
 # Define a function to get line segments from a contour using Douglas-Peucker algorithm
 def get_line_segments(contour, pixel_size, segment_approximation_tolerance=0.02):
-    epsilon = segment_approximation_tolerance / pixel_size
+    epsilon = 1.9 * segment_approximation_tolerance / pixel_size
+    print(epsilon)
     approx = cv2.approxPolyDP(contour, epsilon, True)
     segments = []
     for i in range(len(approx)):
@@ -500,7 +501,7 @@ def merge_segments(seg1, seg2):
     return [sorted_points[0], sorted_points[-1]]
 
 
-def segments_within_tolerance_for_merge_corrected(seg1, seg2, min_thickness, max_distance):
+def segments_colinearity_check(seg1, seg2, min_thickness, max_distance):
     """Check if two segments are candidates for merging."""
     # Check if the segments are close enough to merge based on maximum wall thickness
     close_enough = any(
@@ -509,7 +510,7 @@ def segments_within_tolerance_for_merge_corrected(seg1, seg2, min_thickness, max
 
     # Check if the segments are co-linear
     colinear = any(
-        distance_point_to_line(point, seg1[0], seg1[1]) < min_thickness for point in seg2
+        distance_point_to_line(point, seg1[0], seg1[1]) < (min_thickness / 2) for point in seg2
     )
 
     return close_enough and colinear
@@ -535,7 +536,7 @@ def find_furthest_points(all_points):
     return start_point, end_point
 
 
-def merge_colinear_segments_updated(segments, min_thickness, max_distance):
+def merge_colinear_segments(segments, min_thickness, max_distance):
     """Merge co-linear segments from the given list using the direct approach we tested."""
     final_segments = []
     counter = 0
@@ -545,8 +546,8 @@ def merge_colinear_segments_updated(segments, min_thickness, max_distance):
         to_merge = [base_segment]
 
         for other_segment in segments[1:]:
-            if (segments_within_tolerance_for_merge_corrected(base_segment, other_segment, min_thickness, max_distance)
-                    and segments_are_parallel(base_segment, other_segment, angle_tolerance=3)):
+            if (segments_colinearity_check(base_segment, other_segment, min_thickness, max_distance)
+                    and segments_angle(base_segment, other_segment, angle_tolerance=3)):
                 to_merge.append(other_segment)
 
         # Merge all the segments in to_merge into a single segment
@@ -585,7 +586,7 @@ def angle_between_segments(seg1, seg2):
     return angle_deg
 
 
-def segments_are_parallel(seg1, seg2, angle_tolerance=3):
+def segments_angle(seg1, seg2, angle_tolerance=3):
     """Check if two segments are approximately parallel within a given angle tolerance (in degrees)."""
     angle = angle_between_segments(seg1, seg2)
     return abs(angle) < angle_tolerance or abs(angle - 180) < angle_tolerance
@@ -593,7 +594,7 @@ def segments_are_parallel(seg1, seg2, angle_tolerance=3):
 
 def perpendicular_distance_between_segments(seg1, seg2):
     """Calculate the shortest perpendicular distance between two parallel segments."""
-    if segments_are_parallel(seg1, seg2):
+    if segments_angle(seg1, seg2):
         return distance_point_to_line(seg2[0], seg1[0], seg1[1])
     else:
         return float('inf')
@@ -642,9 +643,10 @@ def check_overlap_parallel_segments(seg1, seg2, min_overlap):
     return overlap_length > min_overlap
 
 
-def group_segments(segments, min_wall_thickness, max_wall_thickness, angle_tolerance=1):
+def group_segments(segments, max_wall_thickness, wall_label, angle_tolerance=1):
     """Group segments that are parallel with a small tolerance."""
     grouped = []
+    wall_labels = []
     facade_wall_candidate = []  # List to hold segments that aren't grouped
 
     while segments:
@@ -655,7 +657,7 @@ def group_segments(segments, min_wall_thickness, max_wall_thickness, angle_toler
         while i < len(segments):
             segment = segments[i]
             if (
-                    segments_are_parallel(current_segment, segment, angle_tolerance) and
+                    segments_angle(current_segment, segment, angle_tolerance) and
                     any(distance_between_points(p1, p2) <= max_wall_thickness for p1 in current_segment for p2 in
                         segment) and
                     check_overlap_parallel_segments(current_segment, segment, min_overlap=max_wall_thickness)
@@ -668,11 +670,11 @@ def group_segments(segments, min_wall_thickness, max_wall_thickness, angle_toler
         # Save only the groups consisting of two or more segments
         if len(parallel_group) >= 2:
             grouped.append(parallel_group)
+            wall_labels.append(wall_label)
         else:
             facade_wall_candidate.append(current_segment)
-    print(facade_wall_candidate)
 
-    return grouped, facade_wall_candidate
+    return grouped, wall_labels, facade_wall_candidate
 
 
 def calculate_wall_axis(group):
@@ -794,8 +796,39 @@ def plot_parallel_groups(groups, wall_axes, binary_image, points_2d, x_min, x_ma
     plt.close(fig)
 
 
+def swell_polygon(vertices, thickness):
+    def compute_normal(p1, p2):
+        edge = np.array(p2) - np.array(p1)
+        normal = np.array([-edge[1], edge[0]])  # Rotate 90 degrees to get the normal
+        normal_length = np.linalg.norm(normal)
+        return normal / normal_length if normal_length != 0 else normal
+
+    def compute_centroid(vertices):
+        centroid = np.mean(vertices, axis=0)
+        return centroid
+
+    centroid = compute_centroid(vertices)
+    offset_segments = []
+
+    n = len(vertices)
+    for i in range(n):
+        p1 = vertices[i]
+        p2 = vertices[(i + 1) % n]
+        normal = compute_normal(p1, p2)
+        midpoint = (np.array(p1) + np.array(p2)) / 2
+        direction = midpoint - centroid
+        if np.dot(normal, direction) < 0:
+            normal = -normal
+        offset_p1 = (np.array(p1) + thickness * normal).tolist()
+        offset_p2 = (np.array(p2) + thickness * normal).tolist()
+        offset_segments.append([offset_p1, offset_p2])
+
+    return offset_segments
+
+
 def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minimum_wall_thickness,
-                   maximum_wall_thickness, grid_coefficient=5):
+                   maximum_wall_thickness, z_floor, z_ceiling, grid_coefficient=5, slab_polygon=None,
+                   exterior_walls_thickness=0.3, exterior_scan=False):
     x_coords, y_coords, z_coords = zip(*pointcloud)
     z_section_boundaries = [0.9, 1.0]  # percentage of the height for the storey sections
 
@@ -818,28 +851,22 @@ def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minim
     y_values_full = np.arange(y_min + 0.5 * pixel_size, y_max, pixel_size)
     grid_full, _, _ = np.histogram2d(points_2d[:, 0], points_2d[:, 1], bins=[x_values_full, y_values_full])
     grid_full = grid_full.T
+    # plot_histogram(grid_full, x_values_full, y_values_full)
 
     # Convert the 2D histogram to binary (mask) based on a threshold
     threshold = 0.01
     print("Converting the 2D histogram to binary (mask) based on a threshold")
-    grid_full_blurred = cv2.GaussianBlur(grid_full, (3, 3), 0)
-    plot_histogram(grid_full, x_values_full, y_values_full)
-
     binary_image = (grid_full > threshold).astype(np.uint8) * 255
-    plot_binary_image(binary_image)
+    # plot_binary_image(binary_image)
 
     # Pre-process the binary image
     print("Pre-processing the binary image")
-    binary_image = closing(binary_image, square(4))  # closes small holes in the binary mask
-    plot_binary_image(binary_image)
+    binary_image = closing(binary_image, square(5))  # closes small holes in the binary mask
+    # plot_binary_image(binary_image)
 
     # Find contours in the binary image
     print("Finding contours in the binary image")
-    # contours, _ = cv2.findContours(binary_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    # Find contours on the original binary image
     contours, _ = cv2.findContours(binary_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    # save_ndarray(contours, "saved_variables/contours.npy")
-    # contours_saved = load_ndarray("saved_variables/contours.npy")
 
     # Define the shift you want (e.g., 1 pixel up and 1 pixel right)
     shift_x = 1  # positive for right
@@ -852,15 +879,14 @@ def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minim
         adjusted_cnt = cv2.transform(cnt, M)
         adjusted_contours.append(adjusted_cnt)
 
-    plot_contours(adjusted_contours)
-    plot_contours(contours)
+    #plot_contours(adjusted_contours)
 
     # Extract all segments from contours
-    print("Extracting all segments from contours")
+    print("Extracting all segments from contours with douglas-peuckert algorithm")
     all_segments = []
     for contour in adjusted_contours:
         all_segments.extend(get_line_segments(contour, pixel_size,
-                                              segment_approximation_tolerance=grid_coefficient*pointcloud_resolution))
+                                              segment_approximation_tolerance=grid_coefficient * pointcloud_resolution))
 
     # Convert pixel-based segment coordinates to real-world coordinates
     print("Converting pixel-based segment coordinates to real-world coordinates")
@@ -868,24 +894,35 @@ def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minim
                                 all_segments]
 
     # Filter out segments shorter than the given threshold
-    print("Filtering out segments shorter than the given threshold")
+    print("Filtering out segments shorter than minimum wall length")
     filtered_segments = [
         segment for segment in segments_in_world_coords
-        if distance_between_points(segment[0], segment[1]) >= 0.5 * minimum_wall_length]
-    plot_segments_with_random_colors(filtered_segments, name="Filtered wall segments")
+        if distance_between_points(segment[0], segment[1]) >= minimum_wall_length]
+    # plot_segments_with_random_colors(filtered_segments, name="filtered_wall_segments")
 
     # Merge the co-linear segments using the updated function
-    print("Merging the co-linear segments using the updated function")
-    final_wall_segments = merge_colinear_segments_updated(filtered_segments.copy(), minimum_wall_thickness,
-                                                          maximum_wall_thickness)
-    plot_segments_with_random_colors(final_wall_segments, name="Final wall segments")
+    print("Merging the co-linear segments")
+    final_wall_segments = merge_colinear_segments(filtered_segments.copy(), minimum_wall_thickness,
+                                                  maximum_wall_thickness)
+    # plot_segments_with_random_colors(final_wall_segments, name="final_wall_segments")
 
     # Group parallel segments
     print("Grouping parallel segments")
-    parallel_groups, facade_wall_candidates = group_segments(final_wall_segments, minimum_wall_thickness,
-                                                             maximum_wall_thickness)
-    plot_parallel_groups2(parallel_groups)
-    plot_segments_with_candidates(facade_wall_candidates)
+    parallel_groups, wall_labels, facade_wall_candidates = (
+        group_segments(final_wall_segments, maximum_wall_thickness, 'interior'))
+
+    # Create facade wall surfaces into the list of exterior wall candidates
+    if not exterior_scan:
+        swollen_polygon_segments = swell_polygon(slab_polygon.get_xy(), exterior_walls_thickness)
+        facade_wall_candidates.extend(swollen_polygon_segments)
+        print("Grouping parallel exterior segments")
+        parallel_facade_groups, wall_labels_facade, _ = (
+            group_segments(facade_wall_candidates, maximum_wall_thickness, 'exterior'))
+        parallel_groups.extend(parallel_facade_groups)
+        wall_labels.extend(wall_labels_facade)
+
+    plot_parallel_wall_groups(parallel_groups)
+    # plot_segments_with_candidates(facade_wall_candidates)
 
     wall_axes, wall_thicknesses = [], []
     for group in parallel_groups:
@@ -901,9 +938,6 @@ def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minim
 
     # Calculate direction vectors for each wall axis
     wall_directions = [(axis[1][0] - axis[0][0], axis[1][1] - axis[0][1]) for axis in wall_axes]
-
-    # Filter out the ceiling and floor points
-    z_floor, z_ceiling = identify_floor_and_ceiling(list(zip(x_coords, y_coords, z_coords)), pointcloud_resolution)
 
     # Assign points to walls
     wall_groups, wall_thicknesses = assign_points_to_walls(x_coords, y_coords, z_coords, wall_axes, parallel_groups,
@@ -948,7 +982,8 @@ def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minim
         translated_filtered_rotated_wall_groups.append(translated_wall)
         # plot_wall(translated_wall, wall_thicknesses[idx], idx+1)
 
-    return start_points, end_points, wall_thicknesses, wall_materials, translated_filtered_rotated_wall_groups
+    return (start_points, end_points, wall_thicknesses, wall_materials, translated_filtered_rotated_wall_groups,
+            wall_labels)
 
 
 def identify_floor_and_ceiling(points, point_cloud_resolution, min_distance=2, plot_histograms_for_floors=False):
@@ -1001,7 +1036,8 @@ def identify_floor_and_ceiling(points, point_cloud_resolution, min_distance=2, p
     return z_floor, z_ceiling
 
 
-def identify_wall_faces(wall_number, points, point_cloud_resolution, min_distance=25, plot_histograms_for_walls=False):
+def identify_wall_faces(wall_number, points, wall_label, point_cloud_resolution, min_distance=25,
+                        plot_histograms_for_walls=False):
     """Identify the y-coordinates of the wall surfaces in the wall point cloud."""
 
     # Extract y-coordinates
@@ -1022,23 +1058,30 @@ def identify_wall_faces(wall_number, points, point_cloud_resolution, min_distanc
         plot_histogram_with_threshold(hist, height_threshold)
 
     # Find peaks in the histogram
-    peaks, properties = find_peaks(hist, distance=min_distance, height=height_threshold, prominence=0.25 * height_threshold)
+    peaks, properties = find_peaks(hist, distance=min_distance, height=height_threshold,
+                                   prominence=0.25 * height_threshold)
     print("Peaks found at indices:", peaks)
 
     # Check if we have at least 2 peaks
-    if len(peaks) >= 2:
-        y1 = (bin_edges[peaks[0]] + bin_edges[peaks[0] + 1]) / 2
-        y2 = (bin_edges[peaks[1]] + bin_edges[peaks[1] + 1]) / 2
+    if wall_label == 'interior':
+        if len(peaks) >= 2:
+            y1 = (bin_edges[peaks[0]] + bin_edges[peaks[0] + 1]) / 2
+            y2 = (bin_edges[peaks[1]] + bin_edges[peaks[1] + 1]) / 2
+        else:
+            # If fewer than two peaks, take the highest points from the first and second halves of the histogram
+            half = len(hist) // 2
+            first_half_max_index = np.argmax(hist[:half])
+            second_half_max_index = np.argmax(hist[half:]) + half
+            y1 = (bin_edges[first_half_max_index] + bin_edges[first_half_max_index + 1]) / 2
+            y2 = (bin_edges[second_half_max_index] + bin_edges[second_half_max_index + 1]) / 2
+            print("No two distinct peaks found. Using highest points from histogram halves.")
     else:
-        # If fewer than two peaks, take the highest points from the first and second halves of the histogram
-        half = len(hist) // 2
-        first_half_max_index = np.argmax(hist[:half])
-        second_half_max_index = np.argmax(hist[half:]) + half
-        y1 = (bin_edges[first_half_max_index] + bin_edges[first_half_max_index + 1]) / 2
-        y2 = (bin_edges[second_half_max_index] + bin_edges[second_half_max_index + 1]) / 2
-        print("No two distinct peaks found. Using highest points from histogram halves.")
-
-    print("y1:", y1, "y2:", y2)
+        # Find the highest peak
+        if len(peaks) > 0:
+            peak_index = np.argmax(hist[peaks])
+            peak = peaks[peak_index]
+            y1 = (bin_edges[peak] + bin_edges[peak + 1]) / 2
+            y2 = y1
 
     # Plotting
     if plot_histograms_for_walls:
@@ -1181,18 +1224,18 @@ def export_wall_points_to_txt(wall_groups, output_dir="walls_outputs_txt"):
     print(f"Exported wall points to {output_dir} directory.")
 
 
-def identify_openings(wall_number, wall_points, resolution, grid_roughness,
+def identify_openings(wall_number, wall_points, wall_label, resolution, grid_roughness,
                       histogram_threshold=0.7, thickness_for_extraction=0.03, min_opening_width=0.3,
-                      min_opening_height=0.3, max_opening_aspect_ratio=4, door_z_max=0.1,
-                      plot_histograms_for_openings=False):
+                      min_opening_height=0.3, max_opening_aspect_ratio=4, door_z_max=0.1, door_min_height=1.8,
+                      opening_min_z_top=1.6, plot_histograms_for_openings=False):
     """Detect rectangular openings (windows and doors) in the wall."""
 
     valid_opening_widths, valid_opening_heights, valid_opening_types = [], [], []
     try:
         # Project points within the region of interest onto the x-z plane
-        y1, y2 = identify_wall_faces(wall_number, wall_points, resolution)
+        y1, y2 = identify_wall_faces(wall_number, wall_points, wall_label, resolution)
         inner_threshold = y1 - thickness_for_extraction
-        outer_threshold = y1 + thickness_for_extraction
+        outer_threshold = y2 + thickness_for_extraction
 
         projected_points = [(x, z) for x, y, z in wall_points if inner_threshold <= y <= outer_threshold]
 
@@ -1258,14 +1301,20 @@ def identify_openings(wall_number, wall_points, resolution, grid_roughness,
                 width = x_end - x_start
                 height = refined_z_max - refined_z_min
 
-                if height > min_opening_height and (height / width) < max_opening_aspect_ratio:
-                    valid_opening_widths.append((x_start, x_end))
-                    valid_opening_heights.append((refined_z_min, refined_z_max))
-                    if min([refined_z_min, refined_z_max]) < door_z_max:
+                if (height > min_opening_height and (height / width) < max_opening_aspect_ratio
+                        and opening_min_z_top < refined_z_max):
+
+                    if min([refined_z_min, refined_z_max]) > door_z_max:
+                        valid_opening_widths.append((x_start, x_end))
+                        valid_opening_heights.append((refined_z_min, refined_z_max))
+                        valid_opening_types.append('window')
+                    elif height > door_min_height:
+                        valid_opening_widths.append((x_start, x_end))
+                        valid_opening_heights.append((refined_z_min, refined_z_max))
                         valid_opening_heights[-1] = (0.0, refined_z_max)
                         valid_opening_types.append('door')
                     else:
-                        valid_opening_types.append('window')
+                        pass
 
             if plot_histograms_for_openings:
                 # Plotting

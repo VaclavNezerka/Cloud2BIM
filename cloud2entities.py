@@ -11,30 +11,32 @@ e57_file_names = ["input_e57/multiple_floor.e57"]
 # xyz_filenames = ["input_xyz/06th.xyz", "input_xyz/07th.xyz"]
 # xyz_filenames = ["input_xyz/new_data/multiple_floor.xyz"]
 # xyz_filenames = ["input_xyz/new_data/Test_room_initial_dataset_002.xyz"]
-# xyz_filenames = ["input_xyz/new_data/Zurich_dataset_synth3_segmnet_merge_bug_01.xyz"]
 xyz_filenames = ["input_xyz/new_data/Zurich_dataset_synth3_01.xyz"]
 # xyz_filenames = ["input_xyz/new_data/Vienna_rummelhartgasse_corner_005.xyz"]
 # xyz_filenames = ["input_xyz/new_data/Zurich_dataset_synth2_002.xyz"]
-# xyz_filenames = ["input_xyz/new_data/Opatov_19th_half_01.xyz"]
+# xyz_filenames = ["input_xyz/new_data/Opatov_19th_01.xyz"]
 # xyz_filenames = ["input_xyz/new_data/Alserstrase_2nd_floor_01.xyz"]
 # xyz_filenames = ["input_xyz/new_data/Kladno_station_floor.xyz"]
 # xyz_filenames = ["input_xyz/new_data/Kladno_station_floor_no_exterior.xyz"]
 # xyz_filenames = ["input_xyz/new_data/Kladno_station_bug_segments.xyz"]
 # xyz_filenames = ["input_xyz/new_data/Opatov_2_rooms.xyz"]
 dilute_pointcloud = False
+
+exterior_scan = False
+exterior_walls_thickness = 0.3
 dilution_factor = 10
 
 # input parameters for identification of elements
 pc_resolution = 0.002
-grid_coefficient = 5  # computational grid size (multiplies the point_cloud_resolution)
+grid_coefficient = 5  # computational grid size
 
 # used if there is no slab in the point cloud for the bottom and uppermost floor
 bfs_thickness = 0.2  # bottom floor slab thickness
 tfc_thickness = 0.05  #top floor ceiling thickness
 
-min_wall_length = 0.1
-min_wall_thickness = 0.05
-max_wall_thickness = 0.65
+min_wall_length = 0.08
+min_wall_thickness = 0.07
+max_wall_thickness = 0.75
 
 # IFC model parameters
 ifc_output_file = 'output_IFC/output-2.ifc'
@@ -92,11 +94,16 @@ walls = []
 all_openings = []
 id = 0
 for i, storey_pointcloud in enumerate(point_cloud_storeys):
-    (start_points, end_points, wall_thicknesses, wall_materials,
-     translated_filtered_rotated_wall_groups) = identify_walls(storey_pointcloud, pc_resolution, min_wall_length,
-                                                               min_wall_thickness, max_wall_thickness, grid_coefficient)
     z_placement = slabs[i]['slab_bottom_z_coord'] + slabs[i]['thickness']
     wall_height = slabs[i + 1]['slab_bottom_z_coord'] - z_placement
+    top_z_placement = slabs[i + 1]['slab_bottom_z_coord']
+
+    (start_points, end_points, wall_thicknesses, wall_materials,
+     translated_filtered_rotated_wall_groups, wall_labels) = (
+        identify_walls(storey_pointcloud, pc_resolution, min_wall_length, min_wall_thickness, max_wall_thickness,
+                       z_placement, top_z_placement, grid_coefficient, slabs[i+1]['polygon'],
+                       exterior_walls_thickness=0.3, exterior_scan=False))
+
     for j in range(len(start_points)):
         id += 1
         walls.append({'id': id, 'storey': i + 1, 'start_point': start_points[j], 'end_point': end_points[j],
@@ -104,9 +111,10 @@ for i, storey_pointcloud in enumerate(point_cloud_storeys):
                       'height': wall_height})
 
         opening_widths, opening_heights, opening_types = identify_openings(j + 1, translated_filtered_rotated_wall_groups[j],
-                                                                           pc_resolution, grid_coefficient,
+                                                                           wall_labels[j], pc_resolution, grid_coefficient,
                                                                            min_opening_width=0.4, min_opening_height=0.3,
-                                                                           max_opening_aspect_ratio=4, door_z_max=0.1)
+                                                                           max_opening_aspect_ratio=4, door_z_max=0.1,
+                                                                           door_min_height=1.9, opening_min_z_top=1.6)
 
         # Temporary list to store openings for the current wall
         wall_openings = []
