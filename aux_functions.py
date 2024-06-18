@@ -1,21 +1,22 @@
-# import pye57
-import e57
-import pandas as pd
-import open3d as o3d
-import alphashape
-from matplotlib.patches import Polygon
-import time
-from datetime import datetime
-from tqdm import tqdm
 import os
-import numpy as np
-import matplotlib.pyplot as plt
-from skimage.morphology import closing, square, disk
-import cv2
-import random
+import time
 import math
-from scipy.signal import find_peaks
+import random
+from datetime import datetime
 from itertools import islice
+
+import cv2
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from scipy.signal import find_peaks
+from skimage.morphology import closing, square
+import open3d as o3d
+import e57
+import pye57
+from tqdm import tqdm
+from matplotlib.patches import Polygon
+
 from plotting_functions import *
 
 
@@ -27,14 +28,11 @@ def log(message, last_time, filename):
     with open(filename, 'a') as f:
         f.write(log_message)
     print(log_message)
-    return current_time  # Return the current time so it can be used as the "last_time" for the next log
+    return current_time  # Return the current time, so it can be used as the "last_time" for the next log
 
 
 def read_e57(file_name):
     # read the documentation at https://github.com/davidcaron/pye57
-    # e57 = pye57.E57(file_name)
-    # data_raw = e57.read_scan_raw(0)
-
     e57_array = e57.read_points(file_name)
     return e57_array
 
@@ -110,20 +108,9 @@ def load_xyz_file(file_name, plot_xyz=False, select_ith_lines=True, ith_lines=20
     return xyz, rgb
 
 
-def create_hull_alphashape(points_3d, concavity_level=1.0):
-    points_2d = [[x, y] for x, y, _ in points_3d]
-    alpha_shape = alphashape.alphashape(points_2d, concavity_level)
-    hull = alpha_shape.convex_hull
-    xx, yy = hull.exterior.coords.xy
-    x_coords = xx.tolist()
-    y_coords = yy.tolist()
-    polygon = Polygon(list(zip(x_coords, y_coords)), facecolor='red', alpha=0.2, edgecolor='r', linewidth=3)
-    return x_coords, y_coords, polygon
-
-
 def smooth_contour(x_contour, y_contour, epsilon):
     """
-    Smooths a contour using the Douglas-Peucker algorithm.
+    Smooths a contour using the Douglas-Peuckert algorithm.
 
     Parameters:
         x_contour (ndarray): Array of x-coordinates of the contour.
@@ -144,7 +131,7 @@ def smooth_contour(x_contour, y_contour, epsilon):
     return x_smoothed, y_smoothed, simplified_points
 
 
-def create_hull_from_histogram(points_3d, pointcloud_resolution, grid_coefficient, plot_contours,
+def create_hull_from_histogram(points_3d, pointcloud_resolution, grid_coefficient, plot_graphics,
                                dilation_meters, erosion_meters):
     # Project 3D points to 2D
     points_2d = np.array([[x, y] for x, y, _ in points_3d])
@@ -168,7 +155,7 @@ def create_hull_from_histogram(points_3d, pointcloud_resolution, grid_coefficien
     # Create 2D histogram and mask
     histogram, _, _ = np.histogram2d(points_2d[:, 0], points_2d[:, 1], bins=(x_edges, y_edges))
     mask = histogram.T > 0  # Threshold to create mask, transposed for correct orientation
-    if plot_contours:
+    if plot_graphics:
         plot_2d_histogram(mask, x_edges, y_edges)
 
     # Apply morphological operation
@@ -179,7 +166,7 @@ def create_hull_from_histogram(points_3d, pointcloud_resolution, grid_coefficien
 
     # Shift the mask for more accurate contours
     shifted_mask = np.roll(mask_eroded, (-1, -1), axis=(0, 1))
-    if plot_contours:
+    if plot_graphics:
         plot_shifted_mask(shifted_mask, x_edges, y_edges)
 
     # Find contours on the eroded mask for correct orientation
@@ -199,8 +186,7 @@ def create_hull_from_histogram(points_3d, pointcloud_resolution, grid_coefficien
     # Smooth the contour
     x_contour_smoothed, y_contour_smoothed, simplified_points = smooth_contour(x_contour, y_contour, epsilon=0.0005)
     polygon_smoothed = Polygon(simplified_points, fill=None, edgecolor='red')
-    if plot_contours:
-        plot_smoothed_contour(polygon, polygon_smoothed)
+    # plot_smoothed_contour(polygon, polygon_smoothed)
 
     return x_contour_smoothed, y_contour_smoothed, polygon_smoothed
 
@@ -220,11 +206,12 @@ def identify_slabs(points_xyz, points_rgb, bottom_floor_slab_thickness, top_floo
     # plot_point_cloud_data(points_xyz, n_points_array, z_array, max_n_points_array, z_step)
 
     # Histogram plotting
-    plt.plot(np.array(n_points_array) / 1000, z_array, '-r', linewidth=0.8)
-    plt.plot([max_n_points_array / 1000, max_n_points_array / 1000], [min(z_array), max(z_array)], '--b', linewidth=1.0)
-    plt.ylabel(r'Height/z-coordinate (m)')
-    plt.xlabel(r'Number of points ($\times 10^3$)')
-    plt.show()
+    if plot_segmented_plane:
+        plt.plot(np.array(n_points_array) / 1000, z_array, '-r', linewidth=0.8)
+        plt.plot([max_n_points_array / 1000, max_n_points_array / 1000], [min(z_array), max(z_array)], '--b', linewidth=1.0)
+        plt.ylabel(r'Height/z-coordinate (m)')
+        plt.xlabel(r'Number of points ($\times 10^3$)')
+        plt.show()
 
     # extract z-coordinates where the density of points (indicated by a high value on the histogram) exceeds 50%
     # of a maximum -> horiz_surface candidates
@@ -271,7 +258,7 @@ def identify_slabs(points_xyz, points_rgb, bottom_floor_slab_thickness, top_floo
             slab_bottom_z_coord = slab_top_z_coord - bottom_floor_slab_thickness
             # x_coords, y_coords, polygon = create_hull_alphashape(slab_points, concavity_level=0.0)  # 0.0 -> convex
             x_coords, y_coords, polygon = create_hull_from_histogram(horiz_surface_planes[i], pc_resolution,
-                                                                     grid_coefficient=5, plot_contours=False,
+                                                                     grid_coefficient=5, plot_graphics=False,
                                                                      dilation_meters=1.0, erosion_meters=1.0)
             slabs.append({'polygon': polygon, 'polygon_x_coords': x_coords, 'polygon_y_coords': y_coords,
                           'slab_bottom_z_coord': slab_bottom_z_coord, 'thickness': bottom_floor_slab_thickness})
@@ -288,7 +275,7 @@ def identify_slabs(points_xyz, points_rgb, bottom_floor_slab_thickness, top_floo
             # create hull for the slab
             # x_coords, y_coords, polygon = create_hull_alphashape(slab_points, concavity_level=0.0)  # 0.0 -> convex
             x_coords, y_coords, polygon = create_hull_from_histogram(slab_points, pc_resolution,
-                                                                     grid_coefficient=5, plot_contours=False,
+                                                                     grid_coefficient=5, plot_graphics=False,
                                                                      dilation_meters=1.2, erosion_meters=1.2)
             slabs.append({'polygon': polygon, 'polygon_x_coords': x_coords, 'polygon_y_coords': y_coords,
                           'slab_bottom_z_coord': slab_bottom_z_coord, 'thickness': slab_thickness})
@@ -302,7 +289,7 @@ def identify_slabs(points_xyz, points_rgb, bottom_floor_slab_thickness, top_floo
             # create hull for the slab
             # x_coords, y_coords, polygon = create_hull_alphashape(slab_points, concavity_level=0.0)  # 0.0 -> convex
             x_coords, y_coords, polygon = create_hull_from_histogram(horiz_surface_planes[i], pc_resolution,
-                                                                     grid_coefficient=5, plot_contours=False,
+                                                                     grid_coefficient=5, plot_graphics=False,
                                                                      dilation_meters=0.6, erosion_meters=0.6)
             slabs.append({'polygon': polygon, 'polygon_x_coords': x_coords, 'polygon_y_coords': y_coords,
                           'slab_bottom_z_coord': slab_bottom_z_coord, 'thickness': top_floor_ceiling_thickness})
@@ -408,10 +395,9 @@ def save_coordinates_to_xyz(coordinates_list, base_filename):
 
 # Functions used for identification of walls
 
-# Define a function to get line segments from a contour using Douglas-Peucker algorithm
+# Define a function to get line segments from a contour using Douglas-Peuckert algorithm
 def get_line_segments(contour, pixel_size, segment_approximation_tolerance=0.02):
-    epsilon = 1.9 * segment_approximation_tolerance / pixel_size
-    print(epsilon)
+    epsilon = segment_approximation_tolerance / pixel_size
     approx = cv2.approxPolyDP(contour, epsilon, True)
     segments = []
     for i in range(len(approx)):
@@ -743,7 +729,7 @@ def line_intersection(line1, line2):
     return x, y
 
 
-def adjust_wall_axes_for_intersections(wall_axes, max_wall_thickness):
+def adjust_intersections(wall_axes, max_wall_thickness):
     """Adjust wall axes to account for intersections."""
     half_max_thickness = max_wall_thickness / 2
 
@@ -768,7 +754,7 @@ def plot_parallel_groups(groups, wall_axes, binary_image, points_2d, x_min, x_ma
     fig = plt.figure(figsize=(10, 8))
 
     # Plot the binary image
-    plt.imshow(binary_image, cmap='gray', origin='lower', extent=[x_min, x_max, y_min, y_max], alpha=0.6)
+    plt.imshow(binary_image, cmap='gray', origin='lower', extent=(x_min, x_max, y_min, y_max), alpha=0.6)
 
     # Scatter plot of points_2d
     plt.scatter(points_2d[:, 0], points_2d[:, 1], color='green', alpha=0.2, s=1)  # alpha for transparency
@@ -797,11 +783,11 @@ def plot_parallel_groups(groups, wall_axes, binary_image, points_2d, x_min, x_ma
 
 
 def swell_polygon(vertices, thickness):
-    def compute_normal(p1, p2):
-        edge = np.array(p2) - np.array(p1)
-        normal = np.array([-edge[1], edge[0]])  # Rotate 90 degrees to get the normal
-        normal_length = np.linalg.norm(normal)
-        return normal / normal_length if normal_length != 0 else normal
+    def compute_normal(pt1, pt2):
+        edge = np.array(pt2) - np.array(pt1)
+        normal_vector = np.array([-edge[1], edge[0]])  # Rotate 90 degrees to get the normal
+        normal_length = np.linalg.norm(normal_vector)
+        return normal_vector / normal_length if normal_length != 0 else normal
 
     def compute_centroid(vertices):
         centroid = np.mean(vertices, axis=0)
@@ -828,7 +814,7 @@ def swell_polygon(vertices, thickness):
 
 def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minimum_wall_thickness,
                    maximum_wall_thickness, z_floor, z_ceiling, grid_coefficient=5, slab_polygon=None,
-                   exterior_walls_thickness=0.3, exterior_scan=False):
+                   exterior_scan=False, exterior_walls_thickness=0.3):
     x_coords, y_coords, z_coords = zip(*pointcloud)
     z_section_boundaries = [0.9, 1.0]  # percentage of the height for the storey sections
 
@@ -854,7 +840,7 @@ def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minim
     # plot_histogram(grid_full, x_values_full, y_values_full)
 
     # Convert the 2D histogram to binary (mask) based on a threshold
-    threshold = 0.01
+    threshold = 0.01  # relative point cloud density
     print("Converting the 2D histogram to binary (mask) based on a threshold")
     binary_image = (grid_full > threshold).astype(np.uint8) * 255
     # plot_binary_image(binary_image)
@@ -868,25 +854,24 @@ def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minim
     print("Finding contours in the binary image")
     contours, _ = cv2.findContours(binary_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
 
-    # Define the shift you want (e.g., 1 pixel up and 1 pixel right)
+    # Definition of the shift (1 pixel up and 1 pixel right) for correct position (grid bug fix)
     shift_x = 1  # positive for right
     shift_y = 1  # negative for up
 
     # Adjust the contour coordinates
     adjusted_contours = []
     for cnt in contours:
-        M = np.float32([[1, 0, shift_x], [0, 1, shift_y]])  # Transformation matrix
-        adjusted_cnt = cv2.transform(cnt, M)
+        transformation_matrix = np.float32([[1, 0, shift_x], [0, 1, shift_y]])
+        adjusted_cnt = cv2.transform(cnt, transformation_matrix)
         adjusted_contours.append(adjusted_cnt)
-
-    #plot_contours(adjusted_contours)
+    # plot_contours(adjusted_contours)
 
     # Extract all segments from contours
     print("Extracting all segments from contours with douglas-peuckert algorithm")
     all_segments = []
     for contour in adjusted_contours:
         all_segments.extend(get_line_segments(contour, pixel_size,
-                                              segment_approximation_tolerance=grid_coefficient * pointcloud_resolution))
+                                              segment_approximation_tolerance=0.019))
 
     # Convert pixel-based segment coordinates to real-world coordinates
     print("Converting pixel-based segment coordinates to real-world coordinates")
@@ -921,7 +906,7 @@ def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minim
         parallel_groups.extend(parallel_facade_groups)
         wall_labels.extend(wall_labels_facade)
 
-    plot_parallel_wall_groups(parallel_groups)
+    # plot_parallel_wall_groups(parallel_groups)
     # plot_segments_with_candidates(facade_wall_candidates)
 
     wall_axes, wall_thicknesses = [], []
@@ -930,7 +915,7 @@ def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minim
         wall_axes.append(wall_axis)
         wall_thicknesses.append(wall_thickness)
 
-    wall_axes = adjust_wall_axes_for_intersections(wall_axes, maximum_wall_thickness)
+    wall_axes = adjust_intersections(wall_axes, maximum_wall_thickness)
     # plot_parallel_groups(parallel_groups, wall_axes, binary_image, points_2d, x_min, x_max, y_min, y_max, storey)
 
     start_points, end_points = zip(*wall_axes)
@@ -976,7 +961,6 @@ def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minim
         for point in wall_group:
             min_y = min(min_y, point[1])
             min_z = min(min_z, point[2])
-        print(min_y, min_z)
 
         translated_wall = [(x - min_x, y - min_y, z - min_z) for x, y, z in wall_group]
         translated_filtered_rotated_wall_groups.append(translated_wall)
@@ -1060,7 +1044,6 @@ def identify_wall_faces(wall_number, points, wall_label, point_cloud_resolution,
     # Find peaks in the histogram
     peaks, properties = find_peaks(hist, distance=min_distance, height=height_threshold,
                                    prominence=0.25 * height_threshold)
-    print("Peaks found at indices:", peaks)
 
     # Check if we have at least 2 peaks
     if wall_label == 'interior':
@@ -1172,35 +1155,6 @@ def rotate_points_to_xz_plane(points, direction_vector):
     return rotated_points
 
 
-def plot_wall(wall_points, thickness, wall_number):
-    """Visualize a wall using both 2D and 3D scatter plots as subfigures within a single figure."""
-
-    # Create a single figure with two subplots
-    fig = plt.figure(figsize=(15, 7))
-
-    # 2D Plot (subplot 1)
-    ax2D = fig.add_subplot(121)  # 1 row, 2 columns, plot 1
-    xs, ys, zs = zip(*wall_points)
-    ax2D.scatter(xs, zs, c='b', marker='o', s=1)
-    ax2D.set_aspect('equal', 'box')  # Equal aspect ratio
-    ax2D.text(0.05, 0.95, f'Thickness: {thickness:.3f} m', transform=ax2D.transAxes,
-              verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
-    ax2D.set_xlabel('x-coordinate (m)')
-    ax2D.set_ylabel('z-coordiante (m)')
-
-    # 3D Plot (subplot 2)
-    ax3D = fig.add_subplot(122, projection='3d')  # 1 row, 2 columns, plot 2
-    ax3D.scatter(xs, ys, zs, c='b', marker='o', s=1)
-    ax3D.set_xlabel('x-coordinate (m)')
-    ax3D.set_ylabel('y-coordinate (m)')
-    ax3D.set_zlabel('z-coordinate (m)')
-
-    plt.tight_layout()
-    plt.savefig('images/wall_outputs_images/wall_%d_2D_3D.jpg' % wall_number, dpi=300)
-    plt.savefig('images/wall_outputs_images/wall_%d_2D_3D.pdf' % wall_number)
-    plt.show()
-
-
 def export_wall_points_to_txt(wall_groups, output_dir="walls_outputs_txt"):
     """
     Export the xyz coordinates of points for each wall to individual .txt files.
@@ -1225,7 +1179,7 @@ def export_wall_points_to_txt(wall_groups, output_dir="walls_outputs_txt"):
 
 
 def identify_openings(wall_number, wall_points, wall_label, resolution, grid_roughness,
-                      histogram_threshold=0.7, thickness_for_extraction=0.03, min_opening_width=0.3,
+                      histogram_threshold=0.7, thickness_for_extraction=0.05, min_opening_width=0.3,
                       min_opening_height=0.3, max_opening_aspect_ratio=4, door_z_max=0.1, door_min_height=1.8,
                       opening_min_z_top=1.6, plot_histograms_for_openings=False):
     """Detect rectangular openings (windows and doors) in the wall."""
@@ -1234,10 +1188,12 @@ def identify_openings(wall_number, wall_points, wall_label, resolution, grid_rou
     try:
         # Project points within the region of interest onto the x-z plane
         y1, y2 = identify_wall_faces(wall_number, wall_points, wall_label, resolution)
-        inner_threshold = y1 - thickness_for_extraction
-        outer_threshold = y2 + thickness_for_extraction
+        inner_threshold = y1 - thickness_for_extraction / 2
+        outer_threshold = y2 + thickness_for_extraction / 2
 
-        projected_points = [(x, z) for x, y, z in wall_points if inner_threshold <= y <= outer_threshold]
+        projected_points = [(x, z) for x, y, z in wall_points if
+                            (inner_threshold <= y <= (y1 + thickness_for_extraction / 2) or
+                             (y2 - thickness_for_extraction) / 2 <= y <= outer_threshold)]
 
         # Project all points onto the x-coordinate
         x_coords, z_coords = zip(*projected_points)

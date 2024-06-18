@@ -23,12 +23,12 @@ xyz_filenames = ["input_xyz/new_data/Zurich_dataset_synth3_01.xyz"]
 dilute_pointcloud = False
 
 exterior_scan = False
-exterior_walls_thickness = 0.3
+
 dilution_factor = 10
 
 # input parameters for identification of elements
-pc_resolution = 0.002
-grid_coefficient = 5  # computational grid size
+pc_resolution = 0.002  # minimum distance between points (after point cloud dilution) [m]
+grid_coefficient = 5  # computational grid size [px/mm]
 
 # used if there is no slab in the point cloud for the bottom and uppermost floor
 bfs_thickness = 0.2  # bottom floor slab thickness
@@ -37,6 +37,7 @@ tfc_thickness = 0.05  #top floor ceiling thickness
 min_wall_length = 0.08
 min_wall_thickness = 0.07
 max_wall_thickness = 0.75
+exterior_walls_thickness = 0.3
 
 # IFC model parameters
 ifc_output_file = 'output_IFC/output-2.ifc'
@@ -101,8 +102,8 @@ for i, storey_pointcloud in enumerate(point_cloud_storeys):
     (start_points, end_points, wall_thicknesses, wall_materials,
      translated_filtered_rotated_wall_groups, wall_labels) = (
         identify_walls(storey_pointcloud, pc_resolution, min_wall_length, min_wall_thickness, max_wall_thickness,
-                       z_placement, top_z_placement, grid_coefficient, slabs[i+1]['polygon'],
-                       exterior_walls_thickness=0.3, exterior_scan=False))
+                       z_placement, top_z_placement, grid_coefficient, slabs[i+1]['polygon'], exterior_scan,
+                       exterior_walls_thickness=0.3))
 
     for j in range(len(start_points)):
         id += 1
@@ -110,11 +111,12 @@ for i, storey_pointcloud in enumerate(point_cloud_storeys):
                       'thickness': wall_thicknesses[j], 'material': wall_materials[j], 'z_placement': z_placement,
                       'height': wall_height})
 
-        opening_widths, opening_heights, opening_types = identify_openings(j + 1, translated_filtered_rotated_wall_groups[j],
-                                                                           wall_labels[j], pc_resolution, grid_coefficient,
-                                                                           min_opening_width=0.4, min_opening_height=0.3,
-                                                                           max_opening_aspect_ratio=4, door_z_max=0.1,
-                                                                           door_min_height=1.9, opening_min_z_top=1.6)
+        (opening_widths, opening_heights,
+         opening_types) = identify_openings(j + 1, translated_filtered_rotated_wall_groups[j],
+                                            wall_labels[j], pc_resolution, grid_coefficient,
+                                            min_opening_width=0.4, min_opening_height=0.3,
+                                            max_opening_aspect_ratio=4, door_z_max=0.1,
+                                            door_min_height=1.9, opening_min_z_top=1.6)
 
         # Temporary list to store openings for the current wall
         wall_openings = []
@@ -141,7 +143,6 @@ for i, storey_pointcloud in enumerate(point_cloud_storeys):
             print(
                 f"Opening ({opening_type:s}): X-Range: {x_start:.2f} to {x_end:.2f}, Z-Range: {z_min:.2f} to {z_max:.2f}")
         print("-" * 50)
-
 
 
 # generate IFC model
@@ -192,8 +193,10 @@ for wall in walls:
     wall_placement = ifc_model.wall_placement(float(wall_z_placement))
     wall_axis_placement = ifc_model.wall_axis_placement(start_point, end_point)
     wall_axis_representation = ifc_model.wall_axis_representation(wall_axis_placement)
-    wall_swept_solid_representation = ifc_model.wall_swept_solid_representation(start_point, end_point, wall_heights, wall_thickness)
-    product_definition_shape = ifc_model.product_definition_shape(wall_axis_representation, wall_swept_solid_representation)
+    wall_swept_solid_representation = ifc_model.wall_swept_solid_representation(start_point, end_point, wall_heights,
+                                                                                wall_thickness)
+    product_definition_shape = ifc_model.product_definition_shape(wall_axis_representation,
+                                                                  wall_swept_solid_representation)
     wall = ifc_model.create_wall(wall_placement, product_definition_shape)
     assign_material = ifc_model.assign_material(wall, material_layer_set_usage)
     wall_type = ifc_model.create_wall_type(wall, wall_thickness)
@@ -215,7 +218,8 @@ for wall in walls:
 
         opening_closed_profile = ifc_model.opening_closed_profile_def(float(opening_width), wall_thickness)
         opening_placement = ifc_model.opening_placement(start_point, wall_placement)
-        opening_extrusion = ifc_model.opening_extrusion(opening_closed_profile, float(opening_height), start_point, end_point, float(window_sill_height), float(offset_from_start))
+        opening_extrusion = ifc_model.opening_extrusion(opening_closed_profile, float(opening_height), start_point,
+                                                        end_point, float(window_sill_height), float(offset_from_start))
         opening_representation = ifc_model.opening_representation(opening_extrusion)
         opening_product_definition = ifc_model.product_definition_shape_opening(opening_representation)
         wall_opening = ifc_model.create_wall_opening(opening_placement[1], opening_product_definition)
