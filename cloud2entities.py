@@ -11,7 +11,7 @@ e57_file_names = ["input_e57/multiple_floor.e57"]
 # xyz_filenames = ["input_xyz/06th.xyz", "input_xyz/07th.xyz"]
 # xyz_filenames = ["input_xyz/new_data/multiple_floor.xyz"]
 # xyz_filenames = ["input_xyz/new_data/Test_room_initial_dataset_002.xyz"]
-xyz_filenames = ["input_xyz/new_data/Zurich_dataset_synth3_01.xyz"]
+# xyz_filenames = ["input_xyz/new_data/Zurich_dataset_synth3_01.xyz"]
 # xyz_filenames = ["input_xyz/new_data/Vienna_rummelhartgasse_corner_005.xyz"]
 # xyz_filenames = ["input_xyz/new_data/Zurich_dataset_synth2_002.xyz"]
 # xyz_filenames = ["input_xyz/new_data/Opatov_19th_01.xyz"]
@@ -19,23 +19,24 @@ xyz_filenames = ["input_xyz/new_data/Zurich_dataset_synth3_01.xyz"]
 # xyz_filenames = ["input_xyz/new_data/Kladno_station_floor.xyz"]
 # xyz_filenames = ["input_xyz/new_data/Kladno_station_floor_no_exterior.xyz"]
 # xyz_filenames = ["input_xyz/new_data/Kladno_station_bug_segments.xyz"]
-# xyz_filenames = ["input_xyz/new_data/Opatov_2_rooms.xyz"]
-dilute_pointcloud = False
+xyz_filenames = ["input_xyz/new_data/Zurich_dataset_synth3_wall_005.xyz"]
+# xyz_filenames = ["input_xyz/new_data/Zurich_dataset_synth3_wall2_005.xyz"]
 
-exterior_scan = False
+dilute_pointcloud = False  # if True, the point cloud is diluted by a factor of dilution_factor
+exterior_scan = True  # if True, the exterior walls are scanned
 
-dilution_factor = 10
+dilution_factor = 10  # dilution factor for the point cloud, skipp every ith line
 
 # input parameters for identification of elements
 pc_resolution = 0.002  # minimum distance between points (after point cloud dilution) [m]
 grid_coefficient = 5  # computational grid size [px/mm]
 
 # used if there is no slab in the point cloud for the bottom and uppermost floor
-bfs_thickness = 0.2  # bottom floor slab thickness
-tfc_thickness = 0.05  #top floor ceiling thickness
+bfs_thickness = 0.3  # bottom floor slab thickness
+tfs_thickness = 0.4  #top floor slab thickness
 
 min_wall_length = 0.08
-min_wall_thickness = 0.07
+min_wall_thickness = 0.05
 max_wall_thickness = 0.75
 exterior_walls_thickness = 0.3
 
@@ -56,7 +57,7 @@ ifc_building_phase = 'Reconstruction'
 ifc_site_latitude = (50, 5, 0)
 ifc_site_longitude = (4, 22, 0)
 ifc_site_elevation = 356.0  # elevation of the site above the sea level
-material_for_slabs = 'Concrete'
+material_for_objects = 'Concrete'
 
 # initiate the logger
 last_time = time.time()
@@ -84,7 +85,7 @@ last_time = log('All point cloud data imported.', last_time, log_filename)
 
 # scan the model along the z-coordinate and search for planes parallel to xy-plane
 slabs, horizontal_surface_planes = identify_slabs(points_xyz, points_rgb, bfs_thickness,
-                                                  tfc_thickness, z_step=0.05,
+                                                  tfs_thickness, z_step=0.05,
                                                   pc_resolution=pc_resolution,
                                                   plot_segmented_plane=False)  # plot with open 3D
 
@@ -95,8 +96,24 @@ walls = []
 all_openings = []
 id = 0
 for i, storey_pointcloud in enumerate(point_cloud_storeys):
-    z_placement = slabs[i]['slab_bottom_z_coord'] + slabs[i]['thickness']
-    wall_height = slabs[i + 1]['slab_bottom_z_coord'] - z_placement
+
+    if exterior_scan:
+        z_placement = slabs[i]['slab_bottom_z_coord'] + slabs[i]['thickness']
+        wall_height = slabs[i + 1]['slab_bottom_z_coord'] - z_placement
+    else:
+        if i == 0:
+            z_placement = slabs[i]['slab_bottom_z_coord']
+            if i == len(point_cloud_storeys) - 1:
+                wall_height = slabs[i + 1]['slab_bottom_z_coord'] - z_placement + tfs_thickness
+            else:
+                wall_height = slabs[i + 1]['slab_bottom_z_coord'] - z_placement
+        elif i == len(point_cloud_storeys) - 1:
+            z_placement = slabs[i]['slab_bottom_z_coord'] + slabs[i]['thickness']
+            wall_height = slabs[i + 1]['slab_bottom_z_coord'] - z_placement + tfs_thickness
+        else:
+            z_placement = slabs[i]['slab_bottom_z_coord'] + slabs[i]['thickness']
+            wall_height = slabs[i + 1]['slab_bottom_z_coord'] - z_placement + slabs[i + 1]['thickness']
+
     top_z_placement = slabs[i + 1]['slab_bottom_z_coord']
 
     (start_points, end_points, wall_thicknesses, wall_materials,
@@ -167,7 +184,7 @@ for idx, slab in enumerate(slabs):
     points_no_duplicates = [[float(coord) for coord in point] for point in points_no_duplicates]
     slabs_ifc.append(ifc_model.create_slab('Slab %d' % (idx + 1), points_no_duplicates,
                                            round(slab['slab_bottom_z_coord'], 3),
-                                           round(slab['thickness'], 3), material_for_slabs))
+                                           round(slab['thickness'], 3), material_for_objects))
 
     # assign the slab to a storey and save them to the IFC model
     ifc_model.assign_product_to_storey(slabs_ifc[-1], storeys_ifc[-1])
