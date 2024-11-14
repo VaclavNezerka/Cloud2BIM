@@ -1,5 +1,6 @@
 from aux_functions import *
 from generate_ifc import IFCmodel
+from space_generator import *
 
 # input point clouds
 e57_input = False
@@ -10,8 +11,8 @@ e57_file_names = ["input_e57/multiple_floor.e57"]
 
 # xyz_filenames = ["input_xyz/06th.xyz", "input_xyz/07th.xyz"]
 # xyz_filenames = ["input_xyz/new_data/multiple_floor.xyz"]
-# xyz_filenames = ["input_xyz/new_data/Test_room_initial_dataset_002.xyz"]
-# xyz_filenames = ["input_xyz/new_data/Zurich_dataset_synth3_01.xyz"]
+# xyz_filenames = ["input_xyz/new_data/multiple_floor.xyz"]
+xyz_filenames = ["input_xyz/new_data/Zurich_dataset_synth3_01.xyz"]
 # xyz_filenames = ["input_xyz/new_data/Vienna_rummelhartgasse_corner_005.xyz"]
 # xyz_filenames = ["input_xyz/new_data/Zurich_dataset_synth2_002.xyz"]
 # xyz_filenames = ["input_xyz/new_data/Opatov_19th_01.xyz"]
@@ -19,11 +20,11 @@ e57_file_names = ["input_e57/multiple_floor.e57"]
 # xyz_filenames = ["input_xyz/new_data/Kladno_station_floor.xyz"]
 # xyz_filenames = ["input_xyz/new_data/Kladno_station_floor_no_exterior.xyz"]
 # xyz_filenames = ["input_xyz/new_data/Kladno_station_bug_segments.xyz"]
-xyz_filenames = ["input_xyz/new_data/Zurich_dataset_synth3_wall_005.xyz"]
+# xyz_filenames = ["input_xyz/new_data/Zurich_dataset_synth3_01_ifcspace.xyz"]
 # xyz_filenames = ["input_xyz/new_data/Zurich_dataset_synth3_wall2_005.xyz"]
 
 dilute_pointcloud = False  # if True, the point cloud is diluted by a factor of dilution_factor
-exterior_scan = True  # if True, the exterior walls are scanned
+exterior_scan = False  # if True, the exterior walls are scanned
 
 dilution_factor = 10  # dilution factor for the point cloud, skipp every ith line
 
@@ -33,7 +34,7 @@ grid_coefficient = 5  # computational grid size [px/mm]
 
 # used if there is no slab in the point cloud for the bottom and uppermost floor
 bfs_thickness = 0.3  # bottom floor slab thickness
-tfs_thickness = 0.4  #top floor slab thickness
+tfs_thickness = 0.4  # top floor slab thickness
 
 min_wall_length = 0.08
 min_wall_thickness = 0.05
@@ -63,6 +64,8 @@ material_for_objects = 'Concrete'
 last_time = time.time()
 log_filename = "log.txt"
 
+# SECTION: Import Point Clouds
+
 # read e57 files and create xyz
 if e57_input:
     for (idx, e57_file_name) in enumerate(e57_file_names):
@@ -83,17 +86,20 @@ for xyz_filename in xyz_filenames:
 points_xyz = np.round(points_xyz, 3)  # round the xyz coordinates to 3 decimals
 last_time = log('All point cloud data imported.', last_time, log_filename)
 
+# SECTION: Segment Slabs and Split the Point Cloud to Storeys
+
 # scan the model along the z-coordinate and search for planes parallel to xy-plane
 slabs, horizontal_surface_planes = identify_slabs(points_xyz, points_rgb, bfs_thickness,
                                                   tfs_thickness, z_step=0.05,
                                                   pc_resolution=pc_resolution,
                                                   plot_segmented_plane=False)  # plot with open 3D
 
+# SECTION: Segment Walls and Classify Openings
+
 # merge_horizontal_pointclouds_in_storey(horizontal_surface_planes)
 point_cloud_storeys = split_pointcloud_to_storeys(points_xyz, slabs)
 # display_cross_section_plot(point_cloud_storeys, slabs)
-walls = []
-all_openings = []
+walls, all_openings, zones = [], [], []
 id = 0
 for i, storey_pointcloud in enumerate(point_cloud_storeys):
 
@@ -119,7 +125,7 @@ for i, storey_pointcloud in enumerate(point_cloud_storeys):
     (start_points, end_points, wall_thicknesses, wall_materials,
      translated_filtered_rotated_wall_groups, wall_labels) = (
         identify_walls(storey_pointcloud, pc_resolution, min_wall_length, min_wall_thickness, max_wall_thickness,
-                       z_placement, top_z_placement, grid_coefficient, slabs[i+1]['polygon'], exterior_scan,
+                       z_placement, top_z_placement, grid_coefficient, slabs[i + 1]['polygon'], exterior_scan,
                        exterior_walls_thickness=0.3))
 
     for j in range(len(start_points)):
@@ -133,7 +139,8 @@ for i, storey_pointcloud in enumerate(point_cloud_storeys):
                                             wall_labels[j], pc_resolution, grid_coefficient,
                                             min_opening_width=0.4, min_opening_height=0.3,
                                             max_opening_aspect_ratio=4, door_z_max=0.1,
-                                            door_min_height=1.9, opening_min_z_top=1.6)
+                                            door_min_height=1.9, opening_min_z_top=1.6,
+                                            plot_histograms_for_openings=False)
 
         # Temporary list to store openings for the current wall
         wall_openings = []
@@ -161,8 +168,13 @@ for i, storey_pointcloud in enumerate(point_cloud_storeys):
                 f"Opening ({opening_type:s}): X-Range: {x_start:.2f} to {x_end:.2f}, Z-Range: {z_min:.2f} to {z_max:.2f}")
         print("-" * 50)
 
+    # SECTION: Split the Storeys to Zones (Spaces in the IFC)
+    print('Segmenting the storey to zones (spaces)...')
+    zones_in_storey = find_zones(walls, snapping_distance=0.8, plot_zones=False)
+    zones.append(zones_in_storey)
 
-# generate IFC model
+# SECTION: Generate IFC
+
 ifc_model = IFCmodel(ifc_project_name, ifc_output_file)
 ifc_model.define_author_information(ifc_author_name + ' ' + ifc_author_surname, ifc_author_organization)
 ifc_model.define_project_data(ifc_building_name, ifc_building_type, ifc_building_phase,
@@ -170,7 +182,7 @@ ifc_model.define_project_data(ifc_building_name, ifc_building_type, ifc_building
                               ifc_author_name, ifc_author_surname, ifc_site_latitude, ifc_site_longitude,
                               ifc_site_elevation)
 
-# Add building storeys
+# Add building storeys and zones
 storeys_ifc, slabs_ifc = [], []
 for idx, slab in enumerate(slabs):
     # define a storey
@@ -188,6 +200,18 @@ for idx, slab in enumerate(slabs):
 
     # assign the slab to a storey and save them to the IFC model
     ifc_model.assign_product_to_storey(slabs_ifc[-1], storeys_ifc[-1])
+
+    # order is important (without last (initial point)
+    # IFCSpace initialization
+    ifc_space_placement = ifc_model.space_placement(slab_position)
+    if idx != len(slabs) - 1:  # avoid creating zones on the uppermost slab
+        zone_number = 1
+        for space_name, space_data in zones[idx].items():  # Iterate over each space dictionary inside the zone
+            # Create the space using the data from the space dictionary
+            ifc_space = ifc_model.create_space(space_data, ifc_space_placement, (idx + 1), zone_number, storeys_ifc[-1],
+                                               space_data["height"])
+            print(zone_number)
+            zone_number += 1
 
 # Wall definition for IFC
 for wall in walls:
@@ -214,11 +238,13 @@ for wall in walls:
                                                                                 wall_thickness)
     product_definition_shape = ifc_model.product_definition_shape(wall_axis_representation,
                                                                   wall_swept_solid_representation)
+    current_story = wall['storey']
     wall = ifc_model.create_wall(wall_placement, product_definition_shape)
     assign_material = ifc_model.assign_material(wall, material_layer_set_usage)
     wall_type = ifc_model.create_wall_type(wall, wall_thickness)
     assign_material_2 = ifc_model.assign_material(wall_type[0], material_layer_set)
-    assign_object = ifc_model.assign_product_to_storey(wall, storeys_ifc[0])
+    # assign_object = ifc_model.assign_product_to_storey(wall, storeys_ifc[0])
+    assign_object = ifc_model.assign_product_to_storey(wall, storeys_ifc[current_story - 1])
 
     for opening in wall_openings:
         # Each 'opening' is a dictionary with the opening data

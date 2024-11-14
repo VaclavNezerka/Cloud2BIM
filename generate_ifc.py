@@ -647,6 +647,121 @@ class IFCmodel:
             RelatedOpeningElement=related_opening_element
         )
         return rel_voids_element
+# IfcSpace creation
+# Expected input:
+# Example dictionary of space dimensions
+    # space_dimensions_dict = {
+    #     "A": [(0, 0), (4, 0), (4, 3), (0, 3)],
+    #     "B": [(5, 5), (7, 5), (7, 7), (5, 7)]}
+
+# ______________________________________________________________________________________
+    def space_placement(self, slab_z_position):
+        # Inception of coordination system - related to slab
+        axis_placement_space = self.ifc_file.create_entity(
+            "IfcAxis2Placement3D",
+            Location=self.ifc_file.create_entity("IfcCartesianPoint", Coordinates=(0.0, 0.0, float(slab_z_position))),
+            Axis=self.ifc_file.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0)),
+            RefDirection=self.ifc_file.create_entity("IfcDirection", DirectionRatios=(1.0, 0.0, 0.0))
+        )
+
+        space_placement = self.ifc_file.create_entity(
+            "IfcLocalPlacement",
+            RelativePlacement=axis_placement_space
+        )
+        return space_placement
+
+    def create_space(self, dimensions, ifc_space_placement, floor_number, i, building_storey, extrusion_depth):
+        # Reference to necessary variables
+        context = self.geom_rep_sub_context
+
+        # Define the boundary of the space using IfcPolyline
+        points_polyline = []  # Initialize an empty list to store points
+        space_vertices = list(dimensions["vertices"])
+
+        for vertex in space_vertices:  # Iterate over the vertices
+            # Create an IfcCartesianPoint for each vertex
+            point = self.ifc_file.create_entity("IfcCartesianPoint",
+                                                Coordinates=(float(vertex[0]), float(vertex[1])))
+            points_polyline.append(point)  # Add the point to the list of points
+
+        # Ensure the polyline is closed by appending the first point at the end if necessary
+        if points_polyline[0].Coordinates != points_polyline[-1].Coordinates:
+            points_polyline.append(points_polyline[0])
+
+        # Create the polyline with the list of points
+        polyline = self.ifc_file.create_entity("IfcPolyline", Points=points_polyline)
+
+        # Create a profile definition using the polyline
+        profile = self.ifc_file.create_entity(
+            "IfcArbitraryClosedProfileDef",
+            ProfileType="AREA",
+            OuterCurve=polyline
+        )
+
+        # Define the extrusion direction (along the Z-axis)
+        extrusion_direction = self.ifc_file.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0))
+
+        # Define the extrusion depth (height of the space)
+
+        # Define the position of the extruded solid
+        position = self.ifc_file.create_entity(
+            "IfcAxis2Placement3D",
+            Location=self.ifc_file.create_entity("IfcCartesianPoint", Coordinates=(0.0, 0.0, 0.0)),
+            Axis=None,
+            RefDirection=None
+        )
+
+        # Create the extruded area solid
+        solid = self.ifc_file.create_entity(
+            "IfcExtrudedAreaSolid",
+            SweptArea=profile,
+            Position=position,
+            ExtrudedDirection=extrusion_direction,
+            Depth=extrusion_depth
+        )
+
+        # Create the shape representation
+        body_representation = self.ifc_file.create_entity(
+            "IfcShapeRepresentation",
+            ContextOfItems=context,
+            RepresentationIdentifier="Body",
+            RepresentationType="SweptSolid",
+            Items=[solid]
+        )
+
+        # Create the product definition shape
+        product_definition_shape = self.ifc_file.create_entity(
+            "IfcProductDefinitionShape",
+            Representations=[body_representation]
+        )
+
+        # Create the IfcSpace entity
+        ifc_space = self.ifc_file.create_entity(
+            "IfcSpace",
+            GlobalId=ifcopenshell.guid.new(),
+            OwnerHistory=self.owner_history,
+            Name=f"{str(floor_number) + '.' + str(i)}",
+            Description=None,
+            ObjectType=None,
+            ObjectPlacement=ifc_space_placement,
+            Representation=product_definition_shape,
+            LongName=f"Room No. {str(floor_number) + '.' + str(i)} name",
+            CompositionType="ELEMENT",
+            PredefinedType="INTERNAL"
+        )
+
+        # Relate the IfcSpace to the building storey using IfcRelContainedInSpatialStructure
+        self.ifc_file.create_entity(
+            "IfcRelContainedInSpatialStructure",
+            GlobalId=ifcopenshell.guid.new(),
+            OwnerHistory=self.owner_history,
+            Name=None,
+            Description=None,
+            RelatedElements=[ifc_space],
+            RelatingStructure=building_storey
+        )
+
+        return ifc_space
 
     def write(self):
         self.ifc_file.write(self.output_file)

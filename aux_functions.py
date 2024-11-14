@@ -194,7 +194,7 @@ def create_hull_from_histogram(points_3d, pointcloud_resolution, grid_coefficien
 
 
 def identify_slabs(points_xyz, points_rgb, bottom_floor_slab_thickness, top_floor_ceiling_thickness,
-                   z_step, pc_resolution, plot_segmented_plane=False):
+                   z_step, pc_resolution, plot_segmented_plane=True):
     z_min, z_max = min(points_xyz[:, 2]), max(points_xyz[:, 2])
     n_steps = int((z_max - z_min) / z_step + 1)
     z_array, n_points_array = [], []
@@ -203,7 +203,7 @@ def identify_slabs(points_xyz, points_rgb, bottom_floor_slab_thickness, top_floo
         idx_selected_xyz = np.where((z < points_xyz[:, 2]) & (points_xyz[:, 2] < (z + z_step)))[0]
         z_array.append(z)
         n_points_array.append(len(idx_selected_xyz))
-    max_n_points_array = 0.5 * max(n_points_array)
+    max_n_points_array = 0.3 * max(n_points_array)
 
     # plot_point_cloud_data(points_xyz, n_points_array, z_array, max_n_points_array, z_step)
 
@@ -1181,7 +1181,7 @@ def export_wall_points_to_txt(wall_groups, output_dir="walls_outputs_txt"):
 def identify_openings(wall_number, wall_points, wall_label, resolution, grid_roughness,
                       histogram_threshold=0.5, thickness_for_extraction=0.05, min_opening_width=0.3,
                       min_opening_height=0.3, max_opening_aspect_ratio=4, door_z_max=0.1, door_min_height=1.8,
-                      opening_min_z_top=1.6, plot_histograms_for_openings=True):
+                      opening_min_z_top=1.6, plot_histograms_for_openings=False):
     """Detect rectangular openings (windows and doors) in the wall."""
 
     valid_opening_widths, valid_opening_heights, valid_opening_types = [], [], []
@@ -1235,7 +1235,10 @@ def identify_openings(wall_number, wall_points, wall_label, resolution, grid_rou
             points_at_middle = [z for x, z in projected_points if (middle_x - tolerance) <= x <= (middle_x + tolerance)]
 
             z_hist, z_edges = np.histogram(points_at_middle, bins=z_bins, range=(z_min, z_max))
-            max2 = sorted(z_hist, reverse=True)[2]
+            try:
+                max2 = sorted(z_hist, reverse=True)[2]
+            except:
+                pass
             z_threshold = max2 * 0.2
 
             candidates = []
