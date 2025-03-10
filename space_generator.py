@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from shapely.geometry import LineString, Point, Polygon
 from shapely.ops import polygonize, unary_union
+import copy
 import re
 import os
 
@@ -120,10 +121,10 @@ def divide_wall(wall, point, min_wall_length):
 
 
 # Function to process the walls list of dictionaries
-def process_disconnected_walls(walls, not_connected_walls, min_wall_length):
+def process_disconnected_walls(walls_for_processing, not_connected_walls, min_wall_length):
     i = 0
-    while i < len(walls):
-        wall = walls[i]
+    while i < len(walls_for_processing):
+        wall = walls_for_processing[i]
         divided = False
 
         # Prioritize disconnected wall points first
@@ -138,9 +139,9 @@ def process_disconnected_walls(walls, not_connected_walls, min_wall_length):
             if is_point_on_centerline(not_connected_wall['start_point'], wall):
                 new_wall_1, new_wall_2 = divide_wall(wall, not_connected_wall['start_point'], min_wall_length)
                 if new_wall_1 and new_wall_2:
-                    walls.pop(i)  # Remove the current wall
-                    walls.insert(i, new_wall_2)  # Insert new divided walls
-                    walls.insert(i, new_wall_1)
+                    walls_for_processing.pop(i)  # Remove the current wall
+                    walls_for_processing.insert(i, new_wall_2)  # Insert new divided walls
+                    walls_for_processing.insert(i, new_wall_1)
                     divided = True
                     need_restart = True
 
@@ -149,12 +150,12 @@ def process_disconnected_walls(walls, not_connected_walls, min_wall_length):
                 # Adjust index to account for new inserted walls
                 if divided:
                     i += 1  # Move to the next wall segment
-                    wall = walls[i]  # Update the wall reference
+                    wall = walls_for_processing[i]  # Update the wall reference
                 new_wall_1, new_wall_2 = divide_wall(wall, not_connected_wall['end_point'], min_wall_length)
                 if new_wall_1 and new_wall_2:
-                    walls.pop(i)  # Remove the updated current wall
-                    walls.insert(i, new_wall_2)  # Insert new divided walls
-                    walls.insert(i, new_wall_1)
+                    walls_for_processing.pop(i)  # Remove the updated current wall
+                    walls_for_processing.insert(i, new_wall_2)  # Insert new divided walls
+                    walls_for_processing.insert(i, new_wall_1)
                     divided = True
                     need_restart = True
 
@@ -165,23 +166,23 @@ def process_disconnected_walls(walls, not_connected_walls, min_wall_length):
 
         # If no division was made, process intersections between walls
         if not divided:
-            for j, other_wall in enumerate(walls):
+            for j, other_wall in enumerate(walls_for_processing):
                 if i != j:
                     if is_point_on_centerline(wall['start_point'], other_wall):
                         new_wall_1, new_wall_2 = divide_wall(other_wall, wall['start_point'], min_wall_length)
                         if new_wall_1 and new_wall_2:
-                            walls.pop(j)  # Remove the other wall
-                            walls.insert(j, new_wall_2)  # Insert new divided walls
-                            walls.insert(j, new_wall_1)
+                            walls_for_processing.pop(j)  # Remove the other wall
+                            walls_for_processing.insert(j, new_wall_2)  # Insert new divided walls
+                            walls_for_processing.insert(j, new_wall_1)
                             i = 0  # Restart the loop
                             divided = True
                         break
                     elif is_point_on_centerline(wall['end_point'], other_wall):
                         new_wall_1, new_wall_2 = divide_wall(other_wall, wall['end_point'], min_wall_length)
                         if new_wall_1 and new_wall_2:
-                            walls.pop(j)  # Remove the other wall
-                            walls.insert(j, new_wall_2)  # Insert new divided walls
-                            walls.insert(j, new_wall_1)
+                            walls_for_processing.pop(j)  # Remove the other wall
+                            walls_for_processing.insert(j, new_wall_2)  # Insert new divided walls
+                            walls_for_processing.insert(j, new_wall_1)
                             i = 0  # Restart the loop
                             divided = True
                         break
@@ -190,7 +191,7 @@ def process_disconnected_walls(walls, not_connected_walls, min_wall_length):
         if not divided:
             i += 1
 
-    return walls
+    return walls_for_processing
 
 
 def extend_to_centerline(not_connected_walls, walls, distance_threshold_extension):
@@ -327,7 +328,7 @@ def process_centerlines(walls, distance_threshold_extension, min_wall_length, pl
     extended_walls = extend_to_centerline(not_connected_walls, walls, distance_threshold_extension)
     if plot:
         plot_wall_center_lines(extended_walls, 'Walls extended to centerline')
-    processed_walls = process_disconnected_walls(walls, extended_walls, min_wall_length)
+    processed_walls = process_disconnected_walls(copy.deepcopy(walls), extended_walls, min_wall_length)
     if plot:
         plot_wall_center_lines(processed_walls, 'Divided in intersection')
 
@@ -883,7 +884,7 @@ def get_sample_walls():
     return walls
 
 
-def find_zones(walls, snapping_distance=0.5, plot_zones=True):
+def identify_zones(walls, snapping_distance=0.5, plot_zones=True):
     # Split wall center lines if they are in intersection with other center lines
     updated_walls = process_centerlines(walls, snapping_distance, min_wall_length=0.02, plot=plot_zones)
 
@@ -929,4 +930,4 @@ def find_zones(walls, snapping_distance=0.5, plot_zones=True):
 
 if __name__ == '__main__':
     walls = get_sample_walls()
-    zones = find_zones(walls, snapping_distance=0.5, plot_zones=True)
+    zones = identify_zones(walls, snapping_distance=0.5, plot_zones=True)

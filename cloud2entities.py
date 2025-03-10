@@ -1,66 +1,110 @@
+import argparse
 from aux_functions import *
 from generate_ifc import IFCmodel
 from space_generator import *
 
-# input point clouds
-e57_input = False
-# e57_file_names = ["input_e57/test_room.e57"]
-# e57_file_names = ['input_e57/05th.e57', "input_e57/06th.e57", "input_e57/07th.e57"]
-# e57_file_names = ["input_e57/06th.e57", "input_e57/07th.e57"]
-e57_file_names = ["input_e57/multiple_floor.e57"]
 
-# xyz_filenames = ["input_xyz/06th.xyz", "input_xyz/07th.xyz"]
-# xyz_filenames = ["input_xyz/new_data/multiple_floor.xyz"]
-# xyz_filenames = ["input_xyz/new_data/multiple_floor.xyz"]
-xyz_filenames = ["input_xyz/new_data/Zurich_dataset_synth3_01.xyz"]
-# xyz_filenames = ["input_xyz/new_data/Vienna_rummelhartgasse_corner_005.xyz"]
-# xyz_filenames = ["input_xyz/new_data/Zurich_dataset_synth2_002.xyz"]
-# xyz_filenames = ["input_xyz/new_data/Opatov_19th_01.xyz"]
-# xyz_filenames = ["input_xyz/new_data/Alserstrase_2nd_floor_01.xyz"]
-# xyz_filenames = ["input_xyz/new_data/Kladno_station_floor.xyz"]
-# xyz_filenames = ["input_xyz/new_data/Kladno_station_floor_no_exterior.xyz"]
-# xyz_filenames = ["input_xyz/new_data/Kladno_station_bug_segments.xyz"]
-# xyz_filenames = ["input_xyz/new_data/Zurich_dataset_synth3_01_ifcspace.xyz"]
-# xyz_filenames = ["input_xyz/new_data/Zurich_dataset_synth3_wall2_005.xyz"]
+def parse_arguments():
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(description="Process point clouds and generate IFC models.")
 
-dilute_pointcloud = False  # if True, the point cloud is diluted by a factor of dilution_factor
-exterior_scan = False  # if True, the exterior walls are scanned
+    # Input files
+    parser.add_argument("--e57_input", action="store_true", help="Use E57 files as input")
+    parser.add_argument("--e57_files", nargs="+", default=["input_e57/multiple_floor.e57"],
+                        help="List of E57 input files")
+    parser.add_argument("--xyz_files", nargs="+", default=["input_xyz/new_data/Zurich_dataset_synth3_01.xyz"],
+                        help="List of XYZ input files")
 
-dilution_factor = 10  # dilution factor for the point cloud, skipp every ith line
+    # Processing options
+    parser.add_argument("--dilute", action="store_true", help="Dilute the point cloud")
+    parser.add_argument("--exterior_scan", action="store_true", help="Scan exterior walls")
+    parser.add_argument("--dilution_factor", type=int, default=10, help="Dilution factor (skip every ith line)")
+    parser.add_argument("--pc_resolution", type=float, default=0.002, help="Minimum point distance after dilution (m)")
+    parser.add_argument("--grid_coefficient", type=int, default=5, help="Computational grid size [px/mm]")
 
-# input parameters for identification of elements
-pc_resolution = 0.002  # minimum distance between points (after point cloud dilution) [m]
-grid_coefficient = 5  # computational grid size [px/mm]
+    # Slab parameters
+    parser.add_argument("--bfs_thickness", type=float, default=0.3, help="Bottom floor slab thickness (m)")
+    parser.add_argument("--tfs_thickness", type=float, default=0.4, help="Top floor slab thickness (m)")
 
-# used if there is no slab in the point cloud for the bottom and uppermost floor
-bfs_thickness = 0.3  # bottom floor slab thickness
-tfs_thickness = 0.4  # top floor slab thickness
+    # Wall parameters
+    parser.add_argument("--min_wall_length", type=float, default=0.08, help="Minimum wall length (m)")
+    parser.add_argument("--min_wall_thickness", type=float, default=0.05, help="Minimum wall thickness (m)")
+    parser.add_argument("--max_wall_thickness", type=float, default=0.75, help="Maximum wall thickness (m)")
+    parser.add_argument("--exterior_walls_thickness", type=float, default=0.3, help="Exterior wall thickness (m)")
 
-min_wall_length = 0.08
-min_wall_thickness = 0.05
-max_wall_thickness = 0.75
-exterior_walls_thickness = 0.3
+    # IFC Output parameters
+    parser.add_argument("--output_ifc", type=str, default="output_IFC/output-2.ifc", help="Output IFC file path")
+    parser.add_argument("--ifc_project_name", type=str, default="Sample project", help="IFC Project Name")
+    parser.add_argument("--ifc_project_long_name", type=str, default="Deconstruction of non-load-bearing elements",
+                        help="IFC Project Long Name")
+    parser.add_argument("--ifc_project_version", type=str, default="version 1.0", help="IFC Project Version")
 
-# IFC model parameters
-ifc_output_file = 'output_IFC/output-2.ifc'
-ifc_project_name = 'Sample project'
-ifc_project_long_name = 'Deconstruction of non-load-bearing elements'
-ifc_project_version = 'version 1.0'
+    # IFC Author Information
+    parser.add_argument("--ifc_author_name", type=str, default="Slavek", help="IFC Author Name")
+    parser.add_argument("--ifc_author_surname", type=str, default="Zbirovsky", help="IFC Author Surname")
+    parser.add_argument("--ifc_author_organization", type=str, default="CTU in Prague", help="IFC Author Organization")
 
-ifc_author_name = 'Slavek'
-ifc_author_surname = 'Zbirovsky'
-ifc_author_organization = 'CTU in Prague'
+    # Building information
+    parser.add_argument("--ifc_building_name", type=str, default="Hotel Opatov", help="IFC Building Name")
+    parser.add_argument("--ifc_building_type", type=str, default="Hotel", help="IFC Building Type")
+    parser.add_argument("--ifc_building_phase", type=str, default="Reconstruction", help="IFC Building Phase")
 
-ifc_building_name = 'Hotel Opatov'
-ifc_building_type = 'Hotel'
-ifc_building_phase = 'Reconstruction'
+    # Site Information
+    parser.add_argument("--ifc_site_latitude", nargs=3, type=int, default=(50, 5, 0),
+                        help="IFC Site Latitude (degrees, minutes, seconds)")
+    parser.add_argument("--ifc_site_longitude", nargs=3, type=int, default=(4, 22, 0),
+                        help="IFC Site Longitude (degrees, minutes, seconds)")
+    parser.add_argument("--ifc_site_elevation", type=float, default=356.0,
+                        help="Elevation of the site above sea level (m)")
 
-ifc_site_latitude = (50, 5, 0)
-ifc_site_longitude = (4, 22, 0)
-ifc_site_elevation = 356.0  # elevation of the site above the sea level
-material_for_objects = 'Concrete'
+    # Material settings
+    parser.add_argument("--material_for_objects", type=str, default="Concrete", help="Material for objects")
 
-# initiate the logger
+    args = parser.parse_args()
+    return args
+
+
+# Parse arguments
+args = parse_arguments()
+
+# Assign parsed arguments to variables
+e57_input = args.e57_input
+e57_file_names = args.e57_files
+xyz_filenames = args.xyz_files
+dilute_pointcloud = args.dilute
+exterior_scan = args.exterior_scan
+dilution_factor = args.dilution_factor
+pc_resolution = args.pc_resolution
+grid_coefficient = args.grid_coefficient
+
+bfs_thickness = args.bfs_thickness
+tfs_thickness = args.tfs_thickness
+
+min_wall_length = args.min_wall_length
+min_wall_thickness = args.min_wall_thickness
+max_wall_thickness = args.max_wall_thickness
+exterior_walls_thickness = args.exterior_walls_thickness
+
+ifc_output_file = args.output_ifc
+ifc_project_name = args.ifc_project_name
+ifc_project_long_name = args.ifc_project_long_name
+ifc_project_version = args.ifc_project_version
+
+ifc_author_name = args.ifc_author_name
+ifc_author_surname = args.ifc_author_surname
+ifc_author_organization = args.ifc_author_organization
+
+ifc_building_name = args.ifc_building_name
+ifc_building_type = args.ifc_building_type
+ifc_building_phase = args.ifc_building_phase
+
+ifc_site_latitude = tuple(args.ifc_site_latitude)
+ifc_site_longitude = tuple(args.ifc_site_longitude)
+ifc_site_elevation = args.ifc_site_elevation
+
+material_for_objects = args.material_for_objects
+
+# Initiate the logger
 last_time = time.time()
 log_filename = "log.txt"
 
@@ -82,7 +126,7 @@ for xyz_filename in xyz_filenames:
     points_xyz_temp, points_rgb_temp = load_xyz_file(xyz_filename, plot_xyz=False, select_ith_lines=dilute_pointcloud,
                                                      ith_lines=dilution_factor)
     points_xyz = np.vstack((points_xyz, np.array(points_xyz_temp)))
-    points_rgb = np.vstack((points_rgb, np.array(points_rgb_temp)))
+    # points_rgb = np.vstack((points_rgb, np.array(points_rgb_temp)))
 points_xyz = np.round(points_xyz, 3)  # round the xyz coordinates to 3 decimals
 last_time = log('All point cloud data imported.', last_time, log_filename)
 
@@ -90,7 +134,7 @@ last_time = log('All point cloud data imported.', last_time, log_filename)
 
 # scan the model along the z-coordinate and search for planes parallel to xy-plane
 slabs, horizontal_surface_planes = identify_slabs(points_xyz, points_rgb, bfs_thickness,
-                                                  tfs_thickness, z_step=0.05,
+                                                  tfs_thickness, z_step=0.15,
                                                   pc_resolution=pc_resolution,
                                                   plot_segmented_plane=False)  # plot with open 3D
 
@@ -137,9 +181,9 @@ for i, storey_pointcloud in enumerate(point_cloud_storeys):
         (opening_widths, opening_heights,
          opening_types) = identify_openings(j + 1, translated_filtered_rotated_wall_groups[j],
                                             wall_labels[j], pc_resolution, grid_coefficient,
-                                            min_opening_width=0.4, min_opening_height=0.3,
+                                            min_opening_width=0.4, min_opening_height=0.6,
                                             max_opening_aspect_ratio=4, door_z_max=0.1,
-                                            door_min_height=1.9, opening_min_z_top=1.6,
+                                            door_min_height=1.7, opening_min_z_top=1.6,
                                             plot_histograms_for_openings=False)
 
         # Temporary list to store openings for the current wall
@@ -170,7 +214,7 @@ for i, storey_pointcloud in enumerate(point_cloud_storeys):
 
     # SECTION: Split the Storeys to Zones (Spaces in the IFC)
     print('Segmenting the storey to zones (spaces)...')
-    zones_in_storey = find_zones(walls, snapping_distance=0.8, plot_zones=False)
+    zones_in_storey = identify_zones(walls, snapping_distance=0.8, plot_zones=False)
     zones.append(zones_in_storey)
 
 # SECTION: Generate IFC

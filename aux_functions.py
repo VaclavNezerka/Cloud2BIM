@@ -203,7 +203,7 @@ def identify_slabs(points_xyz, points_rgb, bottom_floor_slab_thickness, top_floo
         idx_selected_xyz = np.where((z < points_xyz[:, 2]) & (points_xyz[:, 2] < (z + z_step)))[0]
         z_array.append(z)
         n_points_array.append(len(idx_selected_xyz))
-    max_n_points_array = 0.3 * max(n_points_array)
+    max_n_points_array = 0.35 * max(n_points_array)
 
     # plot_point_cloud_data(points_xyz, n_points_array, z_array, max_n_points_array, z_step)
 
@@ -247,7 +247,7 @@ def identify_slabs(points_xyz, points_rgb, bottom_floor_slab_thickness, top_floo
             (h_surf_candidates[i][0] < points_xyz[:, 2]) &
             (points_xyz[:, 2] < h_surf_candidates[i][1]))[0]
         horiz_surface_planes.append(points_xyz[horiz_surface_idx])
-        horiz_surface_colors.append(points_rgb[horiz_surface_idx] / 255)
+        #horiz_surface_colors.append(points_rgb[horiz_surface_idx] / 255)
 
     # plot_horizontal_surfaces(horiz_surface_planes)
 
@@ -1021,7 +1021,7 @@ def identify_floor_and_ceiling(points, point_cloud_resolution, min_distance=2, p
 
 
 def identify_wall_faces(wall_number, points, wall_label, point_cloud_resolution, min_distance=25,
-                        plot_histograms_for_walls=False):
+                        plot_histograms_for_walls=True):
     """Identify the y-coordinates of the wall surfaces in the wall point cloud."""
 
     # Extract y-coordinates
@@ -1179,9 +1179,9 @@ def export_wall_points_to_txt(wall_groups, output_dir="walls_outputs_txt"):
 
 
 def identify_openings(wall_number, wall_points, wall_label, resolution, grid_roughness,
-                      histogram_threshold=0.5, thickness_for_extraction=0.05, min_opening_width=0.3,
-                      min_opening_height=0.3, max_opening_aspect_ratio=4, door_z_max=0.1, door_min_height=1.8,
-                      opening_min_z_top=1.6, plot_histograms_for_openings=False):
+                      histogram_threshold=0.7, thickness_for_extraction=0.07,
+                      min_opening_width=0.3, min_opening_height=0.3, max_opening_aspect_ratio=4,
+                      door_z_max=0.1, door_min_height=1.8, opening_min_z_top=1.6, plot_histograms_for_openings=False):
     """Detect rectangular openings (windows and doors) in the wall."""
 
     valid_opening_widths, valid_opening_heights, valid_opening_types = [], [], []
@@ -1225,7 +1225,7 @@ def identify_openings(wall_number, wall_points, wall_label, resolution, grid_rou
             elif count >= x_threshold and in_opening:
                 in_opening = False
                 end = edges[i]
-                if abs(end - start) > min_opening_width and start > 0:
+                if abs(end - start) > min_opening_width and (start > x_min and end < x_max):
                     openings.append((start, end))
 
         # For each valid opening, determine more precise height using z-histogram
