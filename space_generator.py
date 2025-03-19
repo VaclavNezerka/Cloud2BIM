@@ -51,16 +51,16 @@ def plot_wall_center_lines(walls_dictionary, title):
 
 
 # Connection of elements disconnected very closely
-def find_disconnected_walls(walls):
+def find_disconnected_walls(walls_local):
     # Step 1: Count occurrences of each start and end point
     point_count = {}
-    for wall in walls:
+    for wall in walls_local:
         for point in (tuple(wall['start_point']), tuple(wall['end_point'])):
             point_count[point] = point_count.get(point, 0) + 1
 
     # Step 2: Identify walls where either start or end point has only one connection
     not_connected_walls = [
-        wall for wall in walls
+        wall for wall in walls_local
         if point_count[tuple(wall['start_point'])] == 1 or point_count[tuple(wall['end_point'])] == 1
     ]
 
@@ -194,7 +194,7 @@ def process_disconnected_walls(walls_for_processing, not_connected_walls, min_wa
     return walls_for_processing
 
 
-def extend_to_centerline(not_connected_walls, walls, distance_threshold_extension):
+def extend_to_centerline(not_connected_walls, walls_local, distance_threshold_extension):
     # Function to extend the wall until the point lies on a centerline of another wall
     for i, not_connected_wall in enumerate(not_connected_walls):
         # Check start and end points
@@ -203,7 +203,7 @@ def extend_to_centerline(not_connected_walls, walls, distance_threshold_extensio
 
             # Check if the point is already on any centerline
             point_on_centerline = False
-            for wall in walls:
+            for wall in walls_local:
                 # Skip if the wall is the same as the not_connected_wall
                 if wall == not_connected_wall:
                     continue
@@ -216,7 +216,7 @@ def extend_to_centerline(not_connected_walls, walls, distance_threshold_extensio
             # If the point is not on any centerline, extend the wall
             if not point_on_centerline:
                 # Extend the wall using the previously defined function
-                updated_wall = extend_point_on_centerline(point, not_connected_wall, walls,
+                updated_wall = extend_point_on_centerline(point, not_connected_wall, walls_local,
                                                           distance_threshold_extension)
 
                 # If the wall was updated, save it back and remove the original
@@ -256,7 +256,7 @@ def find_intersection(moving_point, extended_point, wall):
     return None
 
 
-def extend_point_on_centerline(point, not_connected_wall, walls, distance_threshold_extension):
+def extend_point_on_centerline(point, not_connected_wall, walls_local, distance_threshold_extension):
     # Determine if 'point' matches the start or end point of 'not_connected_wall'
     if point == not_connected_wall['start_point']:
         moving_point_coords = not_connected_wall['start_point']
@@ -288,7 +288,7 @@ def extend_point_on_centerline(point, not_connected_wall, walls, distance_thresh
 
     # Check for intersection with any wall in the list
     wall_partime = {}
-    for wall in walls:
+    for wall in walls_local:
         extended_points = extend_segment(wall, distance_threshold_extension)
         wall_partime['start_point'] = extended_points[0]
         wall_partime['end_point'] = extended_points[1]
@@ -320,15 +320,15 @@ def extend_point_on_centerline(point, not_connected_wall, walls, distance_thresh
 
 
 # Main function for wall axes processing
-def process_centerlines(walls, distance_threshold_extension, min_wall_length, plot=True):
+def process_centerlines(walls_local, distance_threshold_extension, min_wall_length, plot=True):
     """Splits walls (center lines) at intersections and returns the updated list of walls."""
-    not_connected_walls = find_disconnected_walls(walls)
+    not_connected_walls = find_disconnected_walls(walls_local)
     if plot:
         plot_wall_center_lines(not_connected_walls, 'Walls without start-end point in intersection')
-    extended_walls = extend_to_centerline(not_connected_walls, walls, distance_threshold_extension)
+    extended_walls = extend_to_centerline(not_connected_walls, walls_local, distance_threshold_extension)
     if plot:
         plot_wall_center_lines(extended_walls, 'Walls extended to centerline')
-    processed_walls = process_disconnected_walls(copy.deepcopy(walls), extended_walls, min_wall_length)
+    processed_walls = process_disconnected_walls(copy.deepcopy(walls_local), extended_walls, min_wall_length)
     if plot:
         plot_wall_center_lines(processed_walls, 'Divided in intersection')
 
@@ -368,11 +368,11 @@ def calculate_parallel_segments(start, end, thickness):
     return (offset_start_1, offset_end_1), (offset_start_2, offset_end_2)
 
 
-def generate_space_boundaries(walls, snapping_distance):
+def generate_space_boundaries(walls_local, snapping_distance):
     """Generate parallel segments for each wall and store them in space_segments."""
     space_segments = []
 
-    for wall in walls:
+    for wall in walls_local:
         start = wall['start_point']
         end = wall['end_point']
         thickness = wall['thickness']
@@ -459,10 +459,10 @@ def plot_zone_segments(zone_segments, label):
     plt.show()
 
 
-def extract_space_dimensions(walls, plot_zones):
+def extract_space_dimensions(walls_local, plot_zones):
     # Step 1: Get wall axes
     lines_extended = []
-    for wall in walls:
+    for wall in walls_local:
         point_1, point_2 = wall['start_point'], wall['end_point']
         extended_points = (point_1, point_2)
         extended_line = LineString(extended_points)
@@ -535,13 +535,13 @@ def is_point_in_polygon(point, polygon):
 def get_segment_inside_space(segment, space, relative_min_portion_in_polygon):
     """Calculate the part of the segment that lies inside the space (polygon)."""
 
-    def line_segment_intersection(p1, p2, q1, q2):
+    def line_segment_intersection(p1_local, p2_local, q1_local, q2_local):
         """Calculate the intersection point of two line segments."""
         # Unpack the points
-        x1, y1 = p1
-        x2, y2 = p2
-        x3, y3 = q1
-        x4, y4 = q2
+        x1, y1 = p1_local
+        x2, y2 = p2_local
+        x3, y3 = q1_local
+        x4, y4 = q2_local
 
         # Calculate the denominators
         denom: object = (y4 - y3) * (x2 - x1) - (x4 - x3) * (y2 - y1)
@@ -559,7 +559,7 @@ def get_segment_inside_space(segment, space, relative_min_portion_in_polygon):
                 # Intersection point is within both segments
                 x = x1 + ua * (x2 - x1)
                 y = y1 + ua * (y2 - y1)
-                return (x, y)
+                return x, y
         return None  # No valid intersection
 
     def distance(a, b):
@@ -705,18 +705,18 @@ def plot_space_segments(new_space_dimensions):
 
 
 def adjust_segments(segments):
-    def update_segment_endpoints(intersection, segment):
+    def update_segment_endpoints(intersection_local, segment):
         # Find the start or end point of the segment that is closest to the intersection point
         start_point = Point(segment['start_point'])
         end_point = Point(segment['end_point'])
 
         # Determine which endpoint is closer to the intersection
-        if intersection.distance(start_point) < intersection.distance(end_point):
+        if intersection_local.distance(start_point) < intersection_local.distance(end_point):
             # Update the start point to the intersection point
-            segment['start_point'] = (intersection.x, intersection.y)
+            segment['start_point'] = (intersection_local.x, intersection_local.y)
         else:
             # Update the end point to the intersection point
-            segment['end_point'] = (intersection.x, intersection.y)
+            segment['end_point'] = (intersection_local.x, intersection_local.y)
 
         return segment
 
@@ -862,7 +862,7 @@ def convert_to_dictionary(final_spaces):
 
 
 def get_sample_walls():
-    walls = [
+    artificial_walls = [
         {'start_point': (0.1, 0), 'end_point': (10, 0), 'thickness': 0.2, 'material': 'Brick', 'z_placement': 0,
          'height': 3, 'storey': 1},
         {'start_point': (10, 0), 'end_point': (12, 3), 'thickness': 0.2, 'material': 'Brick', 'z_placement': 0,
@@ -881,7 +881,7 @@ def get_sample_walls():
          'height': 3, 'storey': 1},
     ]
 
-    return walls
+    return artificial_walls
 
 
 def identify_zones(walls, snapping_distance=0.5, plot_zones=True):

@@ -203,7 +203,7 @@ def identify_slabs(points_xyz, points_rgb, bottom_floor_slab_thickness, top_floo
         idx_selected_xyz = np.where((z < points_xyz[:, 2]) & (points_xyz[:, 2] < (z + z_step)))[0]
         z_array.append(z)
         n_points_array.append(len(idx_selected_xyz))
-    max_n_points_array = 0.35 * max(n_points_array)
+    max_n_points_array = 0.5 * max(n_points_array)
 
     # plot_point_cloud_data(points_xyz, n_points_array, z_array, max_n_points_array, z_step)
 
@@ -612,8 +612,8 @@ def check_overlap_parallel_segments(seg1, seg2, min_overlap):
         end = min(x1_max, x2_max)
         return (start, end) if start < end else None
 
-    def calculate_overlap_length(overlap):
-        return overlap[1] - overlap[0] if overlap else 0
+    def calculate_overlap_length(overlay):
+        return overlay[1] - overlay[0] if overlay else 0
 
     # Calculate the rotation angle for the first segment to align with the x-axis
     angle = calculate_angle(seg1[0], seg1[1])
@@ -1021,7 +1021,7 @@ def identify_floor_and_ceiling(points, point_cloud_resolution, min_distance=2, p
 
 
 def identify_wall_faces(wall_number, points, wall_label, point_cloud_resolution, min_distance=25,
-                        plot_histograms_for_walls=True):
+                        plot_histograms_for_walls=False):
     """Identify the y-coordinates of the wall surfaces in the wall point cloud."""
 
     # Extract y-coordinates
@@ -1065,6 +1065,8 @@ def identify_wall_faces(wall_number, points, wall_label, point_cloud_resolution,
             peak = peaks[peak_index]
             y1 = (bin_edges[peak] + bin_edges[peak + 1]) / 2
             y2 = y1
+        else:
+            print(f"No peaks found for wall {wall_number}.")
 
     # Plotting
     if plot_histograms_for_walls:
@@ -1225,7 +1227,7 @@ def identify_openings(wall_number, wall_points, wall_label, resolution, grid_rou
             elif count >= x_threshold and in_opening:
                 in_opening = False
                 end = edges[i]
-                if abs(end - start) > min_opening_width and (start > x_min and end < x_max):
+                if abs(end - start) > min_opening_width and (start >= x_min and end <= x_max):
                     openings.append((start, end))
 
         # For each valid opening, determine more precise height using z-histogram

@@ -5,10 +5,16 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
 from matplotlib.patches import Polygon
 
 
-# Corrected for Article
-def plot_contours(contours):
+def set_plot_style():
+    """
+    Set the common plotting style for all plots.
+    """
     plt.rc('text', usetex=True)
     plt.rc('font', family='serif', size=11)
+
+
+def plot_contours(contours):
+    set_plot_style()
     fig, ax = plt.subplots(figsize=(8 / 1.2, 5 / 1.2))
     for contour in contours:
         contour = contour.squeeze(axis=1)  # Remove unnecessary axis
@@ -23,16 +29,12 @@ def plot_contours(contours):
 
 # Corrected for Article
 def plot_binary_image(binary_image):
-    plt.rc('text', usetex=True)
-    plt.rc('font', family='serif', size=11)
+    set_plot_style()
     fig, ax = plt.subplots(figsize=(8 / 1.2, 5 / 1.2))
-
     ax.imshow(binary_image, cmap='gray', origin='lower')
-
     ax.set_xlabel(r'$x$ (px)')
     ax.set_ylabel(r'$y$ (px)')
     fig.tight_layout()
-
     plt.savefig('images/pdf/wall_mask.pdf')
     plt.show()
 
@@ -60,8 +62,7 @@ def plot_segments(segments, color='blue', label=None):
 
 # Corrected for Article
 def plot_segments_with_random_colors(segments, name=None):
-    plt.rc('text', usetex=True)
-    plt.rc('font', family='serif', size=11)
+    set_plot_style()
     fig, ax = plt.subplots(figsize=(8 / 1.2, 5 / 1.2))
 
     num_segments = len(segments)
@@ -76,7 +77,6 @@ def plot_segments_with_random_colors(segments, name=None):
     ax.set_ylabel(r'$y$ (m)')
 
     fig.tight_layout()
-
     plt.savefig(f'images/pdf/{name}.pdf')
     plt.show()
 
@@ -170,8 +170,7 @@ def plot_histogram_with_threshold(hist, height_threshold):
 
 
 def plot_smoothed_contour(original_polygon, smoothed_polygon):
-    plt.rc('text', usetex=True)
-    plt.rc('font', family='serif', size=11)
+    set_plot_style()
 
     fig, ax = plt.subplots(figsize=(8/1.2, 5/1.2))
 
@@ -232,8 +231,7 @@ def plot_smoothed_contour(original_polygon, smoothed_polygon):
 
 
 def plot_parallel_wall_groups(parallel_groups):
-    plt.rc('text', usetex=True)
-    plt.rc('font', family='serif', size=11)
+    set_plot_style()
     fig, ax = plt.subplots(figsize=(8 / 1.2, 5 / 1.2))
     num_segments = len(parallel_groups)
     random_colors = [np.random.rand(3, ) for _ in range(num_segments)]
@@ -252,8 +250,7 @@ def plot_parallel_wall_groups(parallel_groups):
 
 
 def plot_segments_with_candidates(facade_wall_candidates):
-    plt.rc('text', usetex=True)
-    plt.rc('font', family='serif', size=11)
+    set_plot_style()
     """Plot facade wall candidates as distinct segments."""
     fig, ax = plt.subplots(figsize=(8/1.2, 6/1.2))
 
@@ -272,9 +269,7 @@ def plot_segments_with_candidates(facade_wall_candidates):
 
 
 def plot_point_cloud_data(points_xyz, n_points_array, z_array, max_n_points_array, z_step):
-
-    plt.rc('text', usetex=True)
-    plt.rc('font', family='serif', size=11)
+    set_plot_style()
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12/1.5, 6/1.5))  # 2 plots horizontally
 
@@ -313,8 +308,7 @@ def plot_point_cloud_data(points_xyz, n_points_array, z_array, max_n_points_arra
 
 
 def plot_horizontal_surfaces(horiz_surface_planes):
-    plt.rc('text', usetex=True)
-    plt.rc('font', family='serif', size=11)
+    set_plot_style()
 
     tick_interval = 5 # Interval for major ticks on the axes
 
@@ -343,8 +337,7 @@ def plot_horizontal_surfaces(horiz_surface_planes):
 
 
 def plot_2d_histogram(mask, x_edges, y_edges):
-    plt.rc('text', usetex=True)
-    plt.rc('font', family='serif', size=11)
+    set_plot_style()
     fig = plt.figure(figsize=(8/1.2, 6/1.2))
     plt.imshow(mask, extent=[x_edges.min(), x_edges.max(), y_edges.min(), y_edges.max()], cmap='jet',
                origin='lower')
@@ -358,8 +351,7 @@ def plot_2d_histogram(mask, x_edges, y_edges):
 
 
 def plot_shifted_mask(shifted_mask, x_edges, y_edges):
-    plt.rc('text', usetex=True)
-    plt.rc('font', family='serif', size=11)
+    set_plot_style()
     plt.figure(figsize=(8/1.2, 6/1.2))
     plt.imshow(shifted_mask, extent=[x_edges.min(), x_edges.max(), y_edges.min(), y_edges.max()], cmap='binary',
                origin='lower')

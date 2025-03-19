@@ -12,7 +12,7 @@ def parse_arguments():
     parser.add_argument("--e57_input", action="store_true", help="Use E57 files as input")
     parser.add_argument("--e57_files", nargs="+", default=["input_e57/multiple_floor.e57"],
                         help="List of E57 input files")
-    parser.add_argument("--xyz_files", nargs="+", default=["input_xyz/new_data/Zurich_dataset_synth3_01.xyz"],
+    parser.add_argument("--xyz_files", nargs="+", default=["input_xyz/new_data/Kladno_station_floor_no_exterior.xyz"],
                         help="List of XYZ input files")
 
     # Processing options
@@ -60,8 +60,8 @@ def parse_arguments():
     # Material settings
     parser.add_argument("--material_for_objects", type=str, default="Concrete", help="Material for objects")
 
-    args = parser.parse_args()
-    return args
+    parsed_args = parser.parse_args()
+    return parsed_args
 
 
 # Parse arguments
@@ -131,7 +131,9 @@ points_xyz = np.round(points_xyz, 3)  # round the xyz coordinates to 3 decimals
 last_time = log('All point cloud data imported.', last_time, log_filename)
 
 # SECTION: Segment Slabs and Split the Point Cloud to Storeys
-
+print("-" * 50)
+print("Slab segmentation")
+print("-" * 50)
 # scan the model along the z-coordinate and search for planes parallel to xy-plane
 slabs, horizontal_surface_planes = identify_slabs(points_xyz, points_rgb, bfs_thickness,
                                                   tfs_thickness, z_step=0.15,
@@ -139,6 +141,9 @@ slabs, horizontal_surface_planes = identify_slabs(points_xyz, points_rgb, bfs_th
                                                   plot_segmented_plane=False)  # plot with open 3D
 
 # SECTION: Segment Walls and Classify Openings
+print("-" * 50)
+print("Wall segmentation")
+print("-" * 50)
 
 # merge_horizontal_pointclouds_in_storey(horizontal_surface_planes)
 point_cloud_storeys = split_pointcloud_to_storeys(points_xyz, slabs)
@@ -206,6 +211,9 @@ for i, storey_pointcloud in enumerate(point_cloud_storeys):
         all_openings.extend(wall_openings)
 
         # Print or further process the results
+        print("-" * 50)
+        print("Rectangular openings detection")
+        print("-" * 50)
         print(f"Wall {j + 1}:")
         for (x_start, x_end), (z_min, z_max), opening_type in zip(opening_widths, opening_heights, opening_types):
             print(
@@ -214,11 +222,14 @@ for i, storey_pointcloud in enumerate(point_cloud_storeys):
 
     # SECTION: Split the Storeys to Zones (Spaces in the IFC)
     print('Segmenting the storey to zones (spaces)...')
-    zones_in_storey = identify_zones(walls, snapping_distance=0.8, plot_zones=False)
+    print("-" * 50)
+    zones_in_storey = identify_zones(walls, snapping_distance=0.5, plot_zones=False)
     zones.append(zones_in_storey)
 
 # SECTION: Generate IFC
-
+print("-" * 50)
+print("Generating IFC model")
+print("-" * 50)
 ifc_model = IFCmodel(ifc_project_name, ifc_output_file)
 ifc_model.define_author_information(ifc_author_name + ' ' + ifc_author_surname, ifc_author_organization)
 ifc_model.define_project_data(ifc_building_name, ifc_building_type, ifc_building_phase,
@@ -234,16 +245,26 @@ for idx, slab in enumerate(slabs):
     storeys_ifc.append(ifc_model.create_building_storey('Floor %.1f m' % slab_position, slab_position))
 
     # define a slab
-    points = [list(point) for point in zip(slab['polygon_x_coords'], slab['polygon_y_coords'])]
-    points_no_duplicates = list(dict.fromkeys(map(tuple, points)))
-    points_no_duplicates = [list(point) for point in points_no_duplicates]
-    points_no_duplicates = [[float(coord) for coord in point] for point in points_no_duplicates]
-    slabs_ifc.append(ifc_model.create_slab('Slab %d' % (idx + 1), points_no_duplicates,
-                                           round(slab['slab_bottom_z_coord'], 3),
-                                           round(slab['thickness'], 3), material_for_objects))
+    # Convert separate x and y coordinate lists into a list of coordinate pairs
+    points = [[float(x), float(y)] for x, y in zip(slab['polygon_x_coords'], slab['polygon_y_coords'])]
 
-    # assign the slab to a storey and save them to the IFC model
-    ifc_model.assign_product_to_storey(slabs_ifc[-1], storeys_ifc[-1])
+    # Optionally remove duplicate points to avoid redundancy in the polygon
+    # This example uses a simple method by converting each pair into a tuple and then back into a list.
+    points_no_duplicates = list(dict.fromkeys(tuple(pt) for pt in points))
+    points_no_duplicates = [list(pt) for pt in points_no_duplicates]
+
+    # Use the refactored function to create the slab IFC entity
+    # The create_slab function internally creates the slab placement, extrusion, and shape representation.
+    slab_entity = ifc_model.create_slab(
+        slab_name='Slab %d' % (idx + 1),
+        points=points_no_duplicates,
+        slab_z_position=round(slab['slab_bottom_z_coord'], 3),
+        slab_height=round(slab['thickness'], 3),
+        material_name=material_for_objects
+    )
+
+    # Optionally assign the slab to a building storey later on:
+    ifc_model.assign_product_to_storey(slab_entity, storeys_ifc[-1])
 
     # order is important (without last (initial point)
     # IFCSpace initialization
@@ -254,13 +275,14 @@ for idx, slab in enumerate(slabs):
             # Create the space using the data from the space dictionary
             ifc_space = ifc_model.create_space(space_data, ifc_space_placement, (idx + 1), zone_number, storeys_ifc[-1],
                                                space_data["height"])
-            print(zone_number)
             zone_number += 1
 
 # Wall definition for IFC
 for wall in walls:
     start_point = tuple(float(num) for num in wall['start_point'])
     end_point = tuple(float(num) for num in wall['end_point'])
+    if start_point == end_point:
+        continue
     wall_thickness = wall['thickness']
     wall_material = wall['material']
     wall_z_placement = wall['z_placement']
@@ -275,7 +297,7 @@ for wall in walls:
     # Create an IfcMaterialLayerSetUsage and associate it with the element or product
     material_layer_set_usage = ifc_model.create_material_layer_set_usage(material_layer_set, wall_thickness)
     # Local placement
-    wall_placement = ifc_model.wall_placement(float(wall_z_placement))
+    wall_placement = ifc_model.wall_placement(wall['z_placement'])
     wall_axis_placement = ifc_model.wall_axis_placement(start_point, end_point)
     wall_axis_representation = ifc_model.wall_axis_representation(wall_axis_placement)
     wall_swept_solid_representation = ifc_model.wall_swept_solid_representation(start_point, end_point, wall_heights,
