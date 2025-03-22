@@ -8,6 +8,7 @@ import datetime
 import uuid
 import math
 
+
 class IFCmodel:
     def __init__(self, project_name, output_file):
         self.project_name = project_name
@@ -112,10 +113,96 @@ class IFCmodel:
         )
         return unit_assignment
 
+    def create_material_with_color(self, name, rgb_values, transparency=0):
+        """
+        Create a complete material with color in one function call
+
+        Args:
+            name: Name of the material
+            rgb_values: Tuple/list of (red, green, blue) values (0-1)
+            transparency: Transparency value (0-1)
+
+        Returns:
+            tuple: (material, material_definition_representation)
+        """
+        # Create color and style objects
+        color_rgb = self.ifc_file.create_entity(
+            "IfcColourRgb",
+            Name=None,
+            Red=rgb_values[0],
+            Green=rgb_values[1],
+            Blue=rgb_values[2]
+        )
+
+        # Create surface style rendering
+        surface_style_rendering = self.ifc_file.create_entity(
+            "IfcSurfaceStyleRendering",
+            SurfaceColour=color_rgb,
+            Transparency=transparency,
+            DiffuseColour=self.ifc_file.createIfcNormalisedRatioMeasure(0.4),
+            TransmissionColour=None,
+            DiffuseTransmissionColour=None,
+            ReflectionColour=None,
+            SpecularColour=None,
+            SpecularHighlight=None,
+            ReflectanceMethod="NOTDEFINED"
+        )
+
+        # Create surface style
+        surface_style = self.ifc_file.create_entity(
+            "IfcSurfaceStyle",
+            Name=name,
+            Side="BOTH",
+            Styles=[surface_style_rendering]
+        )
+
+        # Create representation style assignment
+        representation_style_assignment = self.ifc_file.create_entity(
+            "IfcPresentationStyleAssignment",
+            Styles=[surface_style]
+        )
+
+        # Create styled item
+        styled_item = self.ifc_file.create_entity(
+            "IfcStyledItem",
+            Item=None,
+            Styles=[representation_style_assignment],
+            Name=None
+        )
+
+        # Create styled representation
+        styled_representation = self.ifc_file.create_entity(
+            "IfcStyledRepresentation",
+            ContextOfItems=self.geom_rep_sub_context,
+            RepresentationIdentifier="Style",
+            RepresentationType="Material",
+            Items=[styled_item]
+        )
+
+        # Create material
+        material = self.ifc_file.create_entity(
+            "IfcMaterial",
+            Name=name,
+            Description=None,
+            Category=None
+        )
+
+        # Create material definition representation
+        material_def_rep = self.ifc_file.create_entity(
+            "IfcMaterialDefinitionRepresentation",
+            Name='Representation',
+            Description='Material Definition Representation',
+            Representations=[styled_representation],
+            RepresentedMaterial=material
+        )
+
+        return material, material_def_rep
+
     def assign_material(self, product, material):
         associated_material = self.ifc_file.create_entity(
             "IfcRelAssociatesMaterial",
             GlobalId=self.generate_guid(),
+            OwnerHistory=self.owner_history,
             RelatingMaterial=material,
             RelatedObjects=[product]
         )
@@ -590,6 +677,87 @@ class IFCmodel:
             RelatedOpeningElement=related_opening_element
         )
         return rel_voids_element
+
+    def create_rel_fills_element(self, relating_building_element, related_opening_element):
+        rel_fills_element = self.ifc_file.create_entity(
+            "IfcRelFillsElement",
+            GlobalId=self.generate_guid(),
+            OwnerHistory=self.owner_history,
+            Name=None,
+            Description=None,
+            RelatingOpeningElement=related_opening_element,
+            RelatedBuildingElement=relating_building_element
+        )
+        return rel_fills_element
+
+    def create_window(self, window_placement, product_definition_shape, window_id):
+        window = self.ifc_file.create_entity(
+            "IfcWindow",
+            GlobalId=self.generate_guid(),
+            OwnerHistory=self.owner_history,
+            Name="Window Name",
+            Description=window_id,
+            ObjectType="Window",
+            ObjectPlacement=window_placement,
+            Representation=product_definition_shape,
+            Tag="Window Tag",
+            PredefinedType="NOTDEFINED"
+        )
+        return window
+
+    def create_window_type(self, window):
+        window_type_local = self.ifc_file.create_entity(
+            "IfcWindowType",
+            GlobalId=self.generate_guid(),
+            OwnerHistory=self.owner_history,
+            Name="Window (simple)",
+            Description=None,
+            ApplicableOccurrence=None,
+            HasPropertySets=None,
+            RepresentationMaps=None,
+            Tag="Window Type Tag",
+            ElementType=None,
+            PredefinedType="NOTDEFINED"
+        )
+        return window_type_local
+
+    def rel_defined_by_type(self, window, window_type):
+        rel_defined_by_type = self.ifc_file.create_entity(
+            "IfcRelDefinesByType",
+            GlobalId=self.generate_guid(),
+            OwnerHistory=self.owner_history,
+            Name=None,
+            Description=None,
+            RelatedObjects=[window],
+            RelatingType=window_type
+        )
+        return rel_defined_by_type
+
+    def create_door(self, door_placement, product_definition_shape, door_id):
+        door = self.ifc_file.create_entity(
+            "IfcDoor",
+            GlobalId=self.generate_guid(),
+            OwnerHistory=self.owner_history,
+            Name="Door Name",
+            Description=door_id,
+            ObjectType="Door",
+            ObjectPlacement=door_placement,
+            Representation=product_definition_shape,
+            Tag="Door Tag",
+            PredefinedType="NOTDEFINED"
+        )
+        return door
+
+    def rel_contained_in_spatial_structure(self, ifc_element, ifc_building_storey):
+        self.ifc_file.create_entity(
+            "IfcRelContainedInSpatialStructure",
+            GlobalId=self.generate_guid(),
+            OwnerHistory=self.owner_history,
+            Name=None,
+            Description=None,
+            RelatedElements=[ifc_element],
+            RelatingStructure=ifc_building_storey
+        )
 
     def space_placement(self, slab_z_position):
         # [MODIFIED] Use helper for space placement with standard axis & ref_direction.

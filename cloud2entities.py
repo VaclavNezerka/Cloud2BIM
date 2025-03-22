@@ -12,7 +12,7 @@ def parse_arguments():
     parser.add_argument("--e57_input", action="store_true", help="Use E57 files as input")
     parser.add_argument("--e57_files", nargs="+", default=["input_e57/multiple_floor.e57"],
                         help="List of E57 input files")
-    parser.add_argument("--xyz_files", nargs="+", default=["input_xyz/new_data/Kladno_station_floor_no_exterior.xyz"],
+    parser.add_argument("--xyz_files", nargs="+", default=["input_xyz/new_data/Zurich_dataset_synth3_01.xyz"],
                         help="List of XYZ input files")
 
     # Processing options
@@ -103,6 +103,9 @@ ifc_site_longitude = tuple(args.ifc_site_longitude)
 ifc_site_elevation = args.ifc_site_elevation
 
 material_for_objects = args.material_for_objects
+# colours for the openings
+door_colour_rgb = (0.541, 0.525, 0.486)
+window_colour_rgb = (0.761, 0.933, 1.0)
 
 # Initiate the logger
 last_time = time.time()
@@ -177,6 +180,9 @@ for i, storey_pointcloud in enumerate(point_cloud_storeys):
                        z_placement, top_z_placement, grid_coefficient, slabs[i + 1]['polygon'], exterior_scan,
                        exterior_walls_thickness=0.3))
 
+    print("-" * 50)
+    print("Rectangular openings detection")
+    print("-" * 50)
     for j in range(len(start_points)):
         id += 1
         walls.append({'id': id, 'storey': i + 1, 'start_point': start_points[j], 'end_point': end_points[j],
@@ -211,9 +217,6 @@ for i, storey_pointcloud in enumerate(point_cloud_storeys):
         all_openings.extend(wall_openings)
 
         # Print or further process the results
-        print("-" * 50)
-        print("Rectangular openings detection")
-        print("-" * 50)
         print(f"Wall {j + 1}:")
         for (x_start, x_end), (z_min, z_max), opening_type in zip(opening_widths, opening_heights, opening_types):
             print(
@@ -223,7 +226,7 @@ for i, storey_pointcloud in enumerate(point_cloud_storeys):
     # SECTION: Split the Storeys to Zones (Spaces in the IFC)
     print('Segmenting the storey to zones (spaces)...')
     print("-" * 50)
-    zones_in_storey = identify_zones(walls, snapping_distance=0.5, plot_zones=False)
+    zones_in_storey = identify_zones(walls, snapping_distance=0.8, plot_zones=False)
     zones.append(zones_in_storey)
 
 # SECTION: Generate IFC
@@ -312,6 +315,23 @@ for wall in walls:
     # assign_object = ifc_model.assign_product_to_storey(wall, storeys_ifc[0])
     assign_object = ifc_model.assign_product_to_storey(wall, storeys_ifc[current_story - 1])
 
+    # Create materials in one step
+    window_material, window_material_def_rep = ifc_model.create_material_with_color(
+        'Window material',
+        window_colour_rgb,
+        transparency=0.7
+    )
+
+    door_material, door_material_def_rep = ifc_model.create_material_with_color(
+        'Door material',
+        door_colour_rgb,
+        transparency=0
+    )
+
+    # Initialize ID counters
+    window_id = 1
+    door_id = 1
+
     for opening in wall_openings:
         # Each 'opening' is a dictionary with the opening data
         opening_type = opening['opening_type']
@@ -319,6 +339,17 @@ for wall in walls:
         x_range_end = opening['x_range_end']
         z_range_min = opening['z_range_min']
         z_range_max = opening['z_range_max']
+
+        # Assign unique ID based on opening type
+        if opening_type == "window":
+            opening_id = f"W{window_id:02d}"  # Format as W01, W02, ...
+            window_id += 1
+        elif opening_type == "door":
+            opening_id = f"D{door_id:02d}"  # Format as D01, D02, ...
+            door_id += 1
+
+        # Store the ID in the opening dictionary
+        opening['id'] = opening_id
 
         opening_width = x_range_end - x_range_start
         opening_height = z_range_max - z_range_min
@@ -333,6 +364,28 @@ for wall in walls:
         opening_product_definition = ifc_model.product_definition_shape_opening(opening_representation)
         wall_opening = ifc_model.create_wall_opening(opening_placement[1], opening_product_definition)
         rel_voids_element = ifc_model.create_rel_voids_element(wall, wall_opening)
+        if opening_type == "window":
+            window_closed_profile = ifc_model.opening_closed_profile_def(float(opening_width), 0.01)
+            window_extrusion = ifc_model.opening_extrusion(window_closed_profile, float(opening_height), start_point,
+                                                           end_point, float(window_sill_height), float(offset_from_start))
+            window_representation = ifc_model.opening_representation(window_extrusion)
+            window_product_definition = ifc_model.product_definition_shape_opening(window_representation)
+            window = ifc_model.create_window(opening_placement[1], window_product_definition, opening_id)
+            window_type = ifc_model.create_window_type(window)
+            rel_defined_by_type = ifc_model.rel_defined_by_type(window, window_type)
+            rel_fills_element = ifc_model.create_rel_fills_element(wall_opening, window)
+            ifc_model.assign_product_to_storey(window, storeys_ifc[current_story - 1])
+            ifc_model.assign_material(window, window_material)
+        elif opening_type == "door":
+            door_closed_profile = ifc_model.opening_closed_profile_def(float(opening_width), 0.01)
+            door_extrusion = ifc_model.opening_extrusion(door_closed_profile, float(opening_height), start_point,
+                                                         end_point, float(window_sill_height), float(offset_from_start))
+            door_representation = ifc_model.opening_representation(door_extrusion)
+            door_product_definition = ifc_model.product_definition_shape_opening(door_representation)
+            door = ifc_model.create_door(opening_placement[1], door_product_definition, opening_id)
+            rel_fills_element = ifc_model.create_rel_fills_element(wall_opening, door)
+            ifc_model.assign_product_to_storey(door, storeys_ifc[current_story - 1])
+            ifc_model.assign_material(door, door_material)
 
 # Write the IFC model to a file
 ifc_model.write()

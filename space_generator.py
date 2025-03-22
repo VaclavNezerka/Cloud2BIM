@@ -884,9 +884,9 @@ def get_sample_walls():
     return artificial_walls
 
 
-def identify_zones(walls, snapping_distance=0.5, plot_zones=True):
+def identify_zones(walls_local, snapping_distance=0.5, plot_zones=True):
     # Split wall center lines if they are in intersection with other center lines
-    updated_walls = process_centerlines(walls, snapping_distance, min_wall_length=0.02, plot=plot_zones)
+    updated_walls = process_centerlines(walls_local, snapping_distance, min_wall_length=0.02, plot=plot_zones)
 
     # Generate wall surfaces (zone_segments) and extend them with half of clipping distance
     zone_segments, zone_segments_extended = generate_space_boundaries(updated_walls, snapping_distance)
@@ -918,6 +918,7 @@ def identify_zones(walls, snapping_distance=0.5, plot_zones=True):
 
     # Adjust geometry and crop the lines to intersection
     final_spaces = adjust_segments(new_space_dimensions)
+    print(space_name)
     pass
     if plot_zones:
         plot_space_segments(final_spaces)
