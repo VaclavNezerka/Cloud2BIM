@@ -930,11 +930,10 @@ class IFCmodel:
         :param column_id: Tag for identification (e.g., "C01", "R01", "ST01").
         :param type_name: Name of column type (e.g., "Rectangular, Circular, Steel").
         :param storey: Related storey.
-        :param placement_coords: coordinates for axis placement (x, y, z).
+        :param placement_coords: coordinates for axis placement - centerpoint (x, y, z).
         :param vector_direction: rotation vector (0, 0, 0)
         :param points_2d: List of (x, y) tuples defining the closed polygon.
         :param height: Height of column.
-        :param material_name: Name of column material.
         """
         # Placement
         ifc_axis = self.ifc_file.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0))

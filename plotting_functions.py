@@ -60,7 +60,6 @@ def plot_segments(segments, color='blue', label=None):
     plt.show()
 
 
-# Corrected for Article
 def plot_segments_with_random_colors(segments, name=None):
     set_plot_style()
     fig, ax = plt.subplots(figsize=(8 / 1.2, 5 / 1.2))

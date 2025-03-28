@@ -13,10 +13,7 @@ from scipy.signal import find_peaks
 from skimage.morphology import closing, footprint_rectangle
 import open3d as o3d
 import e57
-import pye57
 from tqdm import tqdm
-from matplotlib.patches import Polygon
-
 from plotting_functions import *
 
 
@@ -28,7 +25,7 @@ def log(message, last_time, filename):
     with open(filename, 'a') as f:
         f.write(log_message)
     print(log_message)
-    return current_time  # Return the current time, so it can be used as the "last_time" for the next log
+    return current_time
 
 
 def read_e57(file_name):
