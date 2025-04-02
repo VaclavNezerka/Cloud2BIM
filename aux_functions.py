@@ -6,9 +6,7 @@ from datetime import datetime
 from itertools import islice
 
 import cv2
-import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 from scipy.signal import find_peaks
 from skimage.morphology import closing, footprint_rectangle
 import open3d as o3d
@@ -185,7 +183,8 @@ def create_hull_from_histogram(points_3d, pointcloud_resolution, grid_coefficien
     x_contour_smoothed, y_contour_smoothed, simplified_points = smooth_contour(x_contour, y_contour,
                                                                                epsilon=smoothing_factor)
     polygon_smoothed = Polygon(simplified_points, fill=None, edgecolor='red')
-    # plot_smoothed_contour(polygon, polygon_smoothed)
+    if plot_graphics:
+        plot_smoothed_contour(polygon, polygon_smoothed)
 
     return x_contour_smoothed, y_contour_smoothed, polygon_smoothed
 
@@ -484,7 +483,7 @@ def merge_segments(seg1, seg2):
     return [sorted_points[0], sorted_points[-1]]
 
 
-def segments_colinearity_check(seg1, seg2, min_thickness, max_distance):
+def segments_collinearity_check(seg1, seg2, min_thickness, max_distance):
     """Check if two segments are candidates for merging."""
     # Check if the segments are close enough to merge based on maximum wall thickness
     close_enough = any(
@@ -492,11 +491,11 @@ def segments_colinearity_check(seg1, seg2, min_thickness, max_distance):
     )
 
     # Check if the segments are co-linear
-    colinear = any(
+    collinear = any(
         distance_point_to_line(point, seg1[0], seg1[1]) < (min_thickness / 2) for point in seg2
     )
 
-    return close_enough and colinear
+    return close_enough and collinear
 
 
 def find_furthest_points(all_points):
@@ -519,7 +518,7 @@ def find_furthest_points(all_points):
     return start_point, end_point
 
 
-def merge_colinear_segments(segments, min_thickness, max_distance):
+def merge_collinear_segments(segments, min_thickness, max_distance):
     """Merge co-linear segments from the given list using the direct approach we tested."""
     final_segments = []
     counter = 0
@@ -529,7 +528,7 @@ def merge_colinear_segments(segments, min_thickness, max_distance):
         to_merge = [base_segment]
 
         for other_segment in segments[1:]:
-            if (segments_colinearity_check(base_segment, other_segment, min_thickness, max_distance)
+            if (segments_collinearity_check(base_segment, other_segment, min_thickness, max_distance)
                     and segments_angle(base_segment, other_segment, angle_tolerance=3)):
                 to_merge.append(other_segment)
 
@@ -596,10 +595,10 @@ def check_overlap_parallel_segments(seg1, seg2, min_overlap):
         ])
         return np.dot(rotation_matrix, np.array([point[0], point[1]]))
 
-    def process_and_rotate_segments(seg1, seg2, angle):
+    def process_and_rotate_segments(seg_1, seg_2, rot_angle):
         return [
-            [rotate_point(seg1[0], -angle), rotate_point(seg1[1], -angle)],
-            [rotate_point(seg2[0], -angle), rotate_point(seg2[1], -angle)]
+            [rotate_point(seg_1[0], -rot_angle), rotate_point(seg_1[1], -rot_angle)],
+            [rotate_point(seg_2[0], -rot_angle), rotate_point(seg_2[1], -rot_angle)]
         ]
 
     def find_x_axis_overlap(rot_seg1, rot_seg2):
@@ -786,9 +785,9 @@ def swell_polygon(vertices, thickness):
         normal_length = np.linalg.norm(normal_vector)
         return normal_vector / normal_length if normal_length != 0 else normal
 
-    def compute_centroid(vertices):
-        centroid = np.mean(vertices, axis=0)
-        return centroid
+    def compute_centroid(vertices_local):
+        centroid_local = np.mean(vertices_local, axis=0)
+        return centroid_local
 
     centroid = compute_centroid(vertices)
     offset_segments = []
@@ -864,7 +863,7 @@ def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minim
     # plot_contours(adjusted_contours)
 
     # Extract all segments from contours
-    print("Extracting all segments from contours with douglas-peuckert algorithm")
+    print("Extracting all segments from contours with Douglas-Peuckert algorithm")
     all_segments = []
     for contour in adjusted_contours:
         all_segments.extend(get_line_segments(contour, pixel_size,
@@ -884,8 +883,8 @@ def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minim
 
     # Merge the co-linear segments using the updated function
     print("Merging the co-linear segments")
-    final_wall_segments = merge_colinear_segments(filtered_segments.copy(), minimum_wall_thickness,
-                                                  maximum_wall_thickness)
+    final_wall_segments = merge_collinear_segments(filtered_segments.copy(), minimum_wall_thickness,
+                                                   maximum_wall_thickness)
     # plot_segments_with_random_colors(final_wall_segments, name="final_wall_segments")
 
     # Group parallel segments

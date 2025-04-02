@@ -12,7 +12,7 @@ def parse_arguments():
     parser.add_argument("--e57_input", action="store_true", help="Use E57 files as input")
     parser.add_argument("--e57_files", nargs="+", default=["input_e57/multiple_floor.e57"],
                         help="List of E57 input files")
-    parser.add_argument("--xyz_files", nargs="+", default=["input_xyz/new_data/Zurich_dataset_synth3_01.xyz"],
+    parser.add_argument("--xyz_files", nargs="+", default=["input_xyz/new_data/Kladno_station_floor_no_exterior.xyz"],
                         help="List of XYZ input files")
 
     # Processing options
@@ -188,7 +188,7 @@ for i, storey_pointcloud in enumerate(point_cloud_storeys):
         wall_id += 1
         walls.append({'wall_id': wall_id, 'storey': i + 1, 'start_point': start_points[j], 'end_point': end_points[j],
                       'thickness': wall_thicknesses[j], 'material': wall_materials[j], 'z_placement': z_placement,
-                      'height': wall_height})
+                      'height': wall_height, 'label': wall_labels[j]})
 
         (opening_widths, opening_heights,
          opening_types) = identify_openings(j + 1, translated_filtered_rotated_wall_groups[j],
@@ -312,6 +312,7 @@ for wall in walls:
     wall_material = wall['material']
     wall_z_placement = wall['z_placement']
     wall_heights = wall['height']
+    wall_label = wall['label']
 
     wall_openings = [opening for opening in all_openings if opening['opening_wall_id'] == wall['wall_id']]
 
@@ -336,6 +337,8 @@ for wall in walls:
     assign_material_2 = ifc_model.assign_material(wall_type[0], material_layer_set)
     # assign_object = ifc_model.assign_product_to_storey(wall, storeys_ifc[0])
     assign_object = ifc_model.assign_product_to_storey(wall, storeys_ifc[current_story - 1])
+    wall_ext_int_parameter = ifc_model.create_property_single_value("IsExternal",wall_label == 'exterior')
+    ifc_model.create_property_set(wall, wall_ext_int_parameter)
 
     # Create materials
     window_material, window_material_def_rep = ifc_model.create_material_with_color(

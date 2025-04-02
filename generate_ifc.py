@@ -18,8 +18,8 @@ class IFCmodel:
         self.long_project_name = ''
         self.construction_phase = ''
         self.author_name = ''
-        self.author_organization = ''  # model author's organization
-        self.organization = ''  # owner of the model or structure
+        self.author_organization = ''
+        self.organization = ''
         self.version = ''
         self.person_given_name = ''
         self.person_family_name = ''
@@ -38,7 +38,8 @@ class IFCmodel:
         self.ifc_file.header.file_name.originating_system = 'Cloud2BIM'
         self.ifc_file.header.file_name.authorization = 'None'
 
-    def generate_guid(self):
+    @staticmethod
+    def generate_guid():
         return ifcopenshell.guid.new()
 
     def create_local_placement(self, coordinates, axis=None, ref_direction=None, relative_to=None):
@@ -433,7 +434,7 @@ class IFCmodel:
             RelatingStructure=storey
         )
 
-    def create_material_layer(self, wall_thickness=0.3, material_name="Masonry - brick"):
+    def create_material_layer(self, wall_thickness=0.3, material_name="Concrete"):
         material_layer = self.ifc_file.create_entity(
             "IfcMaterialLayer",
             LayerThickness=wall_thickness,
@@ -453,7 +454,7 @@ class IFCmodel:
         material_layer_set = self.ifc_file.create_entity(
             "IfcMaterialLayerSet",
             MaterialLayers=material_layers,
-            LayerSetName='Concrete loadbearing wall - %d mm' % wall_thickness_mm
+            LayerSetName='Concrete load-bearing wall - %d mm' % wall_thickness_mm
         )
         return material_layer_set
 
@@ -505,12 +506,12 @@ class IFCmodel:
         rectangle_profile = self.ifc_file.create_entity(
             "IfcRectangleProfileDef",
             ProfileType='AREA',
-            ProfileName='Wall Perim',
+            ProfileName='Wall Perimeter',
             Position=axis_placement_2d,
             XDim=math.sqrt((end_point[0] - start_point[0]) ** 2 + (end_point[1] - start_point[1]) ** 2),
             YDim=wall_thickness,
         )
-        # [MODIFIED] Use helper to create extruded solid and shape representation
+
         wall_extruded_area = self.create_extruded_solid(
             rectangle_profile,
             position=None,
@@ -581,6 +582,36 @@ class IFCmodel:
             RelatedDefinitions=[wall_type],
         )
         return wall_type, rel_defines_by_type, rel_declares
+
+    def create_property_set(self, related_object, properties):
+        property_set = self.ifc_file.create_entity(
+            "IfcPropertySet",
+            GlobalId=self.generate_guid(),
+            OwnerHistory=self.owner_history,
+            Name=None,
+            Description=None,
+            HasProperties=[properties]
+        )
+        set_relation = self.ifc_file.create_entity(
+            "IfcRelDefinesByProperties",
+            GlobalId=self.generate_guid(),
+            OwnerHistory=self.owner_history,
+            Name="Cloud2BIM p_set",
+            Description=None,
+            RelatedObjects=[related_object],
+            RelatingPropertyDefinition=property_set
+        )
+
+    def create_property_single_value(self, property_name: str, boolean_value: bool):
+        single_value = self.ifc_file.create_entity(
+            "IfcPropertySingleValue",
+            Name=property_name,
+            Description=None,
+            NominalValue=self.ifc_file.create_entity("IfcBoolean", boolean_value),
+            Unit=None
+        )
+
+        return single_value
 
     def create_wall_opening(self, opening_placement, opening_representation):
         opening_standard_case = self.ifc_file.create_entity(
@@ -757,7 +788,6 @@ class IFCmodel:
         )
 
     def space_placement(self, slab_z_position):
-        # [MODIFIED] Use helper for space placement with standard axis & ref_direction.
         return self.create_local_placement(
             (0.0, 0.0, float(slab_z_position)),
             axis=self.ifc_file.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0)),
@@ -860,21 +890,6 @@ class IFCmodel:
         )
         return product_definition_shape
 
-    def create_column_material_profile(self, material_name):
-        material = self.ifc_file.create_entity("IfcMaterial", Name=material_name)
-        profile = self.ifc_file.create_entity(
-            "IfcMaterialProfile",
-            Name="Column Profile",
-            Material=material,
-            Profile=None
-        )
-        profile_set = self.ifc_file.create_entity(
-            "IfcMaterialProfileSet",
-            Name="Column Profile Set",
-            MaterialProfiles=[profile]
-        )
-        return profile_set
-
     def create_column_type(self, type_name_local):
         column_type = self.ifc_file.create_entity(
             "IfcColumnType",
@@ -905,15 +920,6 @@ class IFCmodel:
             PredefinedType=None
         )
         return column
-
-    def assign_material_to_column(self, column, material_profile_set):
-        self.ifc_file.create_entity(
-            "IfcRelAssociatesMaterial",
-            GlobalId=self.generate_guid(),
-            OwnerHistory=self.owner_history,
-            RelatedObjects=[column],
-            RelatingMaterial=material_profile_set
-        )
 
     def define_column_type_relationship(self, column, column_type):
         self.ifc_file.create_entity(
