@@ -855,33 +855,50 @@ class IFCmodel:
             )
         )
 
-        curve = self.ifc_file.create_entity(
-            "IfcIndexedPolyCurve",
-            Points=self.ifc_file.create_entity(
-                "IfcCartesianPointList2d",
-                CoordList=point_coord_list
+        if type_name == 'round':
+            radius = point_coord_list[0]  # Expecting: point_coord_list = [radius]
+            profile = self.ifc_file.create_entity(
+                "IfcCircleProfileDef",
+                ProfileType="AREA",
+                ProfileName="Circular",
+                Position=self.ifc_file.create_entity(
+                    "IfcAxis2Placement2D",
+                    Location=self.ifc_file.create_entity(
+                        "IfcCartesianPoint",
+                        Coordinates=(0.0, 0.0)
+                    )
                 ),
-            Segments=[self.ifc_file.create_entity(
-                "IfcLineIndex",
-                [*range(1, len(point_coord_list) + 1), 1]
-                )],
-            SelfIntersect=None
+                Radius=radius
             )
-
-
-        column_area = self.ifc_file.create_entity(
-            "IfcArbitraryClosedProfileDef",
-            ProfileType="AREA",
-            ProfileName=type_name,
-            OuterCurve=curve
-        )
+        else:
+            curve = self.ifc_file.create_entity(
+                "IfcIndexedPolyCurve",
+                Points=self.ifc_file.create_entity(
+                    "IfcCartesianPointList2d",
+                    CoordList=point_coord_list
+                ),
+                Segments=[
+                    self.ifc_file.create_entity(
+                        "IfcLineIndex",
+                        [*range(1, len(point_coord_list) + 1), 1]
+                    )
+                ],
+                SelfIntersect=None
+            )
+            profile = self.ifc_file.create_entity(
+                "IfcArbitraryClosedProfileDef",
+                ProfileType="AREA",
+                ProfileName=type_name,
+                OuterCurve=curve
+            )
 
         direction = self.ifc_file.create_entity(
             "IfcDirection",
             DirectionRatios=(0.0, 0.0, 1.0)
         )
-        extruded_column_profile = self.create_extruded_solid(column_area, axis_placement, direction, height)
-        shape_rep = self.create_shape_representation(self.geom_rep_sub_context, "Body", "SweptSolid", [extruded_column_profile])
+
+        extruded_solid = self.create_extruded_solid(profile, axis_placement, direction, height)
+        shape_rep = self.create_shape_representation(self.geom_rep_sub_context, "Body", "SweptSolid", [extruded_solid])
         product_definition_shape = self.ifc_file.create_entity(
             "IfcProductDefinitionShape",
             Name=None,
@@ -934,8 +951,8 @@ class IFCmodel:
         """
         Create IfcColumn
         :param column_id: Tag for identification (e.g., "C01", "R01", "ST01").
-        :param type_name: Name of column type (e.g., "Rectangular, Circular, Steel").
-        :param storey: Related storey.
+        :param type_name: Name of column type (e.g., "rect, round, steel").
+        :param storey: Related storey ifcclass.
         :param placement_coords: coordinates for axis placement - centerpoint (x, y, z).
         :param vector_direction: rotation vector (0, 0, 0)
         :param points_2d: List of (x, y) tuples defining the closed polygon.

@@ -284,11 +284,11 @@ for idx, slab in enumerate(slabs):
 '''# Column definition for IFC
 columns_example = [
     {
-        "name": "Column A1",
+        "name": "round", # other classes "rect", "steel"
         "storey": 1,
         "start_point": (0.0, 0.0),  # Only X, Y coordinates
         "direction": (0.2, 0.5),  # Direction only in X, Y plane
-        "profile_points": [[-0.1, -0.1], [0.3, 0.0], [0.3, 0.3], [0.0, 0.3]],  # Square profile
+        "profile_points": [0.3],  # Square profile [-0.1, -0.1], [0.3, 0.0], [0.3, 0.3], [0.0, 0.3]
         "height": 3.0
     }
 ]
