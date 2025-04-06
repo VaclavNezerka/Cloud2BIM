@@ -282,8 +282,8 @@ for idx, slab in enumerate(slabs):
                                                space_data["height"])
             zone_number += 1
 
-'''# Column definition for IFC
-columns_example = [
+# Column definition for IFC
+'''columns_example = [
     {
         "name": "round", # other classes "rect", "steel"
         "storey": 1,
@@ -304,7 +304,7 @@ for column in columns_example:
     column_id +=1'''
 
 # Beams definition for IFC
-# Example input parameters
+'''# Example input parameters
 beams_example = [
     {
         "name": "rect",      # A rectangular beam with larger dimensions
@@ -332,7 +332,7 @@ beam_id=1
 for beam in beams_example:
     ifc_model.create_beam(f"B{beam_id:02d}",beam["name"],storeys_ifc[beam["storey"] - 1],beam["start_point"],
                           beam["direction"],beam["profile_points"],beam["length"],beam_material)
-    beam_id +=1
+    beam_id +=1'''
 
 
 # Wall definition for IFC
