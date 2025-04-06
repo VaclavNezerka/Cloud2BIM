@@ -107,6 +107,7 @@ material_for_objects = args.material_for_objects
 door_colour_rgb = (0.541, 0.525, 0.486)
 window_colour_rgb = (0.761, 0.933, 1.0)
 column_colour_rgb = (0.596,0.576,1.0)
+beam_colour_rgb =  (0.157,0.478,0.0)
 
 # Initiate the logger
 last_time = time.time()
@@ -302,6 +303,38 @@ for column in columns_example:
     ifc_model.assign_material(ifc_column, column_material)
     column_id +=1'''
 
+# Beams definition for IFC
+# Example input parameters
+beams_example = [
+    {
+        "name": "rect",      # A rectangular beam with larger dimensions
+        "storey": 2,               # Placed on the second storey
+        "start_point": (10.0, 5.0),  # X, Y placement
+        "direction": (0.0, -1.0),    # Beam axis direction in XY plane (pointing in negative Y)
+        "profile_points": [0.5, 0.7],# Width and height for 'rect'
+        "length": 8.0              # Extrusion length along the proper axis (e.g., Z-axis after correction)
+    },
+    {
+        "name": "steel",    # A steel beam with a custom I-shaped profile
+        "storey": 2,               # Placed on the second storey
+        "start_point": (12.0, 6.0),  # X, Y placement
+        "direction": (0.5, 0.5),     # Beam axis direction in XY plane
+        "profile_points": [[-0.2, -0.225], [0.2, -0.225], [0.2, -0.165], [0.05, -0.165],
+                           [0.05, 0.125], [0.2, 0.125], [0.2, 0.225], [-0.2, 0.225],
+                           [-0.2, 0.125], [-0.05, 0.125], [-0.05, -0.165], [-0.2, -0.165],
+                           [-0.2, -0.225]],
+        "length": 10.0             # Extrusion length
+    }
+]
+beam_material, beam_material_def_rep= ifc_model.create_material_with_color("beam material",
+                                                                           beam_colour_rgb)
+beam_id=1
+for beam in beams_example:
+    ifc_model.create_beam(f"B{beam_id:02d}",beam["name"],storeys_ifc[beam["storey"] - 1],beam["start_point"],
+                          beam["direction"],beam["profile_points"],beam["length"],beam_material)
+    beam_id +=1
+
+
 # Wall definition for IFC
 for wall in walls:
     start_point = tuple(float(num) for num in wall['start_point'])
@@ -349,8 +382,7 @@ for wall in walls:
 
     door_material, door_material_def_rep = ifc_model.create_material_with_color(
         'Door material',
-        door_colour_rgb,
-        transparency=0
+        door_colour_rgb
     )
 
     # Initialize ID counters
@@ -400,8 +432,8 @@ for wall in walls:
             window_product_definition = ifc_model.product_definition_shape_opening(window_representation)
             window = ifc_model.create_window(opening_placement[1], window_product_definition, opening_id)
             window_type = ifc_model.create_window_type()
-            rel_defined_by_type = ifc_model.rel_defined_by_type(window, window_type)
-            rel_fills_element = ifc_model.create_rel_fills_element(wall_opening, window)
+            ifc_model.create_rel_defines_by_type(window, window_type)
+            ifc_model.create_rel_fills_element(wall_opening, window)
             ifc_model.assign_product_to_storey(window, storeys_ifc[current_story - 1])
             ifc_model.assign_material(window, window_material)
         elif opening_type == "door":
@@ -411,7 +443,7 @@ for wall in walls:
             door_representation = ifc_model.opening_representation(door_extrusion)
             door_product_definition = ifc_model.product_definition_shape_opening(door_representation)
             door = ifc_model.create_door(opening_placement[1], door_product_definition, opening_id)
-            rel_fills_element = ifc_model.create_rel_fills_element(wall_opening, door)
+            ifc_model.create_rel_fills_element(wall_opening, door)
             ifc_model.assign_product_to_storey(door, storeys_ifc[current_story - 1])
             ifc_model.assign_material(door, door_material)
 

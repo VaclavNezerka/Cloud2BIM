@@ -93,6 +93,24 @@ class IFCmodel:
             Items=items
         )
 
+    def create_rel_defines_by_type(self, related_object, relating_type, description=None, name=None):
+        """
+        Creates an IfcRelDefinesByType entity
+        :param related_object: The IFC object instance (e.g., wall, column, window).
+        :param relating_type: The IFC type entity associated with the object (e.g., WallType, ColumnType).
+        :param description: A textual description of the relationship.
+        :param name: A name for the relationship.
+        """
+        return self.ifc_file.create_entity(
+            "IfcRelDefinesByType",
+            GlobalId=self.generate_guid(),
+            OwnerHistory=self.owner_history,
+            Name=name,
+            Description=description,
+            RelatedObjects=[related_object],
+            RelatingType=relating_type
+        )
+
     def define_author_information(self, author_name, author_organization):
         self.author_name = author_name
         self.author_organization = author_organization
@@ -236,6 +254,7 @@ class IFCmodel:
             CoordinateSpaceDimension=3,
             Precision=0.0001,
             WorldCoordinateSystem=axis_placement
+
         )
 
         self.geom_rep_sub_context = self.ifc_file.create_entity(
@@ -563,15 +582,8 @@ class IFCmodel:
             ElementType="Wall Type",
             PredefinedType="STANDARD"
         )
-        rel_defines_by_type = self.ifc_file.create_entity(
-            "IfcRelDefinesByType",
-            GlobalId=self.generate_guid(),
-            OwnerHistory=self.owner_history,
-            Name=None,
-            Description="Relation between Wall and WallType",
-            RelatedObjects=[ifc_wall],
-            RelatingType=wall_type,
-        )
+        rel_defines_by_type = self.create_rel_defines_by_type(ifc_wall, wall_type,
+                                                              "Relation between Wall and WallType", None)
         rel_declares = self.ifc_file.create_entity(
             "IfcRelDeclares",
             GlobalId=self.generate_guid(),
@@ -601,6 +613,7 @@ class IFCmodel:
             RelatedObjects=[related_object],
             RelatingPropertyDefinition=property_set
         )
+        return property_set, set_relation
 
     def create_property_single_value(self, property_name: str, boolean_value: bool):
         single_value = self.ifc_file.create_entity(
@@ -748,18 +761,6 @@ class IFCmodel:
             PredefinedType="NOTDEFINED"
         )
         return window_type_local
-
-    def rel_defined_by_type(self, window, window_type):
-        rel_defined_by_type = self.ifc_file.create_entity(
-            "IfcRelDefinesByType",
-            GlobalId=self.generate_guid(),
-            OwnerHistory=self.owner_history,
-            Name=None,
-            Description=None,
-            RelatedObjects=[window],
-            RelatingType=window_type
-        )
-        return rel_defined_by_type
 
     def create_door(self, door_placement, product_definition_shape, door_id):
         door = self.ifc_file.create_entity(
@@ -938,15 +939,6 @@ class IFCmodel:
         )
         return column
 
-    def define_column_type_relationship(self, column, column_type):
-        self.ifc_file.create_entity(
-            "IfcRelDefinesByType",
-            GlobalId=self.generate_guid(),
-            OwnerHistory=self.owner_history,
-            RelatedObjects=[column],
-            RelatingType=column_type
-        )
-
     def create_column(self, column_id, type_name, storey, placement_coords, vector_direction, points_2d, height):
         """
         Create IfcColumn
@@ -973,10 +965,146 @@ class IFCmodel:
         column_type = self.create_column_type(type_name)
 
         # Relationships
-        self.define_column_type_relationship(column, column_type)
+        self.create_rel_defines_by_type(column, column_type)
         self.assign_product_to_storey(column, storey)
 
         return column
+
+    def create_beam_type(self, type_name_local):
+        """
+        Creates an IfcBeamType entity with the specified name and default attributes.
+        Parameters:
+            type_name_local (str): The localized or descriptive name for the beam type.
+        """
+        beam_type = self.ifc_file.create_entity(
+            "IfcBeamType",
+            GlobalId=self.generate_guid(),
+            OwnerHistory=self.owner_history,
+            Name=type_name_local,
+            Description=None,
+            ApplicableOccurrence=None,
+            HasPropertySets=None,
+            RepresentationMaps=None,
+            Tag=None,
+            ElementType=None,
+            PredefinedType="BEAM"  # Valid enum in IfcBeamTypeEnum
+        )
+        return beam_type
+
+    def create_beam_geometry(self, beam_type, length, point_list):
+        """
+        Create beam geometry of type 'rect' (rectangular) or 'steel' (I-shape), extruded along the X-axis.
+        point_list: dimensions of the profile
+        - for "rect": [width, height]
+        - for "steel": list of 2D profile points [[x1,y1], [x2,y2], ...]
+        """
+        # Profile placement in 2D
+        profile_position = self.ifc_file.create_entity(
+            "IfcAxis2Placement2D",
+            Location=self.ifc_file.create_entity(
+                "IfcCartesianPoint",
+                Coordinates=(0.0, 0.0)),
+            RefDirection = self.ifc_file.create_entity(
+                "IfcDirection",
+                DirectionRatios=(1.0, 0.0)
+            )
+        )
+
+        if beam_type == "rect":
+            if point_list[0] is None or point_list[1] is None:
+                raise ValueError("Rectangular beam requires 'width' and 'height'.")
+
+            profile = self.ifc_file.create_entity(
+                "IfcRectangleProfileDef",
+                ProfileType="AREA",
+                Position=profile_position,
+                XDim=point_list[0],
+                YDim=point_list[1]
+            )
+
+        elif beam_type == "steel":  # list of [x,y] coordinates
+            curve = self.ifc_file.create_entity(
+                "IfcIndexedPolyCurve",
+                Points=self.ifc_file.create_entity(
+                    "IfcCartesianPointList2D",
+                    CoordList=point_list
+                ),
+                Segments=[
+                    self.ifc_file.create_entity("IfcLineIndex", [*range(1, len(point_list) + 1), 1])
+                ],
+                SelfIntersect=None
+            )
+            profile = self.ifc_file.create_entity(
+                "IfcArbitraryClosedProfileDef",
+                ProfileType="AREA",
+                ProfileName="SteelProfile",
+                OuterCurve=curve
+            )
+
+        # Local 3D axis placement
+        axis_placement = self.ifc_file.create_entity(
+            "IfcAxis2Placement3D",
+            Location=self.ifc_file.create_entity("IfcCartesianPoint",Coordinates=(0.0, 0.0, 0.0)),
+            Axis = self.ifc_file.create_entity("IfcDirection", DirectionRatios=(0.0, 1.0, 0.0)),
+            RefDirection = self.ifc_file.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0))
+        )
+
+        # Extrusion along X-axis
+        direction = self.ifc_file.create_entity(
+            "IfcDirection",
+            DirectionRatios=(0.0, 0.0, 1.0)
+        )
+
+        # Create the solid and representation
+        extruded_solid = self.create_extruded_solid(profile, axis_placement, direction, length)
+        shape_rep = self.create_shape_representation(self.geom_rep_sub_context, "Body", "SweptSolid", [extruded_solid])
+
+        product_definition_shape = self.ifc_file.create_entity(
+            "IfcProductDefinitionShape",
+            Name=None,
+            Description=None,
+            Representations=[shape_rep]
+        )
+
+        return product_definition_shape
+
+    def create_beam_entity(self, beam_id_local, placement, geometry):
+        """
+        Creates a standard IfcBeam entity with minimal required attributes.
+        :param beam_id_local: Name of the beam element (B01 , T001).
+        :param placement: IfcLocalPlacement
+        :param geometry: IfcProductDefinitionShape
+        """
+        beam = self.ifc_file.create_entity(
+            "IfcBeam",
+            GlobalId=self.generate_guid(),
+            OwnerHistory=self.owner_history,
+            Name=beam_id_local,
+            Description=None,
+            ObjectType=None,
+            ObjectPlacement=placement,
+            Representation=geometry,
+            Tag=None,
+            PredefinedType="BEAM"
+        )
+        return beam
+
+    def create_beam(self,beam_id, type_name, storey, placement_coords, vector_direction, points_2d, length, material):
+        # Placement
+        ifc_axis = self.ifc_file.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0))
+        rotation = self.ifc_file.create_entity("IfcDirection", DirectionRatios=vector_direction)
+        beam_placement = self.create_local_placement(placement_coords, axis=ifc_axis, ref_direction=rotation)
+        # Geometry representation
+        beam_geometry = self.create_beam_geometry(type_name, length, points_2d)
+        # beam entity
+        beam = self.create_beam_entity(beam_id, beam_placement, beam_geometry)
+        # beam type
+        beam_type = self.create_beam_type(type_name)
+        self.create_rel_defines_by_type(beam, beam_type)
+        # Material
+        self.assign_material(beam, material)
+        # Relationships
+        self.assign_product_to_storey(beam, storey)
 
     def write(self):
         self.ifc_file.write(self.output_file)
