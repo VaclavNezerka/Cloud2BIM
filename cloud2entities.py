@@ -1,115 +1,55 @@
-import argparse
 from aux_functions import *
 from generate_ifc import IFCmodel
 from space_generator import *
 
+# === Load Configuration ===
+config = load_config_and_variables()
 
-def parse_arguments():
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(description="Process point clouds and generate IFC models.")
+# === Assign variables ===
+e57_input = config["e57_input"]
+if e57_input:
+    e57_file_names = config["e57_file_names"]
+xyz_filenames = config["xyz_filenames"]
+exterior_scan = config["exterior_scan"]
+dilute_pointcloud = config["dilute_pointcloud"]
+dilution_factor = config["dilution_factor"]
+pc_resolution = config["pc_resolution"]
+grid_coefficient = config["grid_coefficient"]
 
-    # Input files
-    parser.add_argument("--e57_input", action="store_true", help="Use E57 files as input")
-    parser.add_argument("--e57_files", nargs="+", default=["input_e57/multiple_floor.e57"],
-                        help="List of E57 input files")
-    parser.add_argument("--xyz_files", nargs="+", default=["input_xyz/new_data/Kladno_station_floor_no_exterior.xyz"],
-                        help="List of XYZ input files")
+bfs_thickness = config["bfs_thickness"]
+tfs_thickness = config["tfs_thickness"]
 
-    # Processing options
-    parser.add_argument("--dilute", action="store_true", help="Dilute the point cloud")
-    parser.add_argument("--exterior_scan", action="store_true", help="Scan exterior walls")
-    parser.add_argument("--dilution_factor", type=int, default=10, help="Dilution factor (skip every ith line)")
-    parser.add_argument("--pc_resolution", type=float, default=0.002, help="Minimum point distance after dilution (m)")
-    parser.add_argument("--grid_coefficient", type=int, default=5, help="Computational grid size [px/mm]")
+min_wall_length = config["min_wall_length"]
+min_wall_thickness = config["min_wall_thickness"]
+max_wall_thickness = config["max_wall_thickness"]
+exterior_walls_thickness = config["exterior_walls_thickness"]
 
-    # Slab parameters
-    parser.add_argument("--bfs_thickness", type=float, default=0.3, help="Bottom floor slab thickness (m)")
-    parser.add_argument("--tfs_thickness", type=float, default=0.4, help="Top floor slab thickness (m)")
+ifc_output_file = config["ifc_output_file"]
+ifc_project_name = config["ifc_project_name"]
+ifc_project_long_name = config["ifc_project_long_name"]
+ifc_project_version = config["ifc_project_version"]
 
-    # Wall parameters
-    parser.add_argument("--min_wall_length", type=float, default=0.08, help="Minimum wall length (m)")
-    parser.add_argument("--min_wall_thickness", type=float, default=0.05, help="Minimum wall thickness (m)")
-    parser.add_argument("--max_wall_thickness", type=float, default=0.75, help="Maximum wall thickness (m)")
-    parser.add_argument("--exterior_walls_thickness", type=float, default=0.3, help="Exterior wall thickness (m)")
+ifc_author_name = config["ifc_author_name"]
+ifc_author_surname = config["ifc_author_surname"]
+ifc_author_organization = config["ifc_author_organization"]
 
-    # IFC Output parameters
-    parser.add_argument("--output_ifc", type=str, default="output_IFC/output-2.ifc", help="Output IFC file path")
-    parser.add_argument("--ifc_project_name", type=str, default="Sample project", help="IFC Project Name")
-    parser.add_argument("--ifc_project_long_name", type=str, default="Deconstruction of non-load-bearing elements",
-                        help="IFC Project Long Name")
-    parser.add_argument("--ifc_project_version", type=str, default="version 1.0", help="IFC Project Version")
+ifc_building_name = config["ifc_building_name"]
+ifc_building_type = config["ifc_building_type"]
+ifc_building_phase = config["ifc_building_phase"]
 
-    # IFC Author Information
-    parser.add_argument("--ifc_author_name", type=str, default="Slavek", help="IFC Author Name")
-    parser.add_argument("--ifc_author_surname", type=str, default="Zbirovsky", help="IFC Author Surname")
-    parser.add_argument("--ifc_author_organization", type=str, default="CTU in Prague", help="IFC Author Organization")
+ifc_site_latitude = config["ifc_site_latitude"]
+ifc_site_longitude = config["ifc_site_longitude"]
+ifc_site_elevation = config["ifc_site_elevation"]
+material_for_objects = config["material_for_objects"]
 
-    # Building information
-    parser.add_argument("--ifc_building_name", type=str, default="Hotel Opatov", help="IFC Building Name")
-    parser.add_argument("--ifc_building_type", type=str, default="Hotel", help="IFC Building Type")
-    parser.add_argument("--ifc_building_phase", type=str, default="Reconstruction", help="IFC Building Phase")
-
-    # Site Information
-    parser.add_argument("--ifc_site_latitude", nargs=3, type=int, default=(50, 5, 0),
-                        help="IFC Site Latitude (degrees, minutes, seconds)")
-    parser.add_argument("--ifc_site_longitude", nargs=3, type=int, default=(4, 22, 0),
-                        help="IFC Site Longitude (degrees, minutes, seconds)")
-    parser.add_argument("--ifc_site_elevation", type=float, default=356.0,
-                        help="Elevation of the site above sea level (m)")
-
-    # Material settings
-    parser.add_argument("--material_for_objects", type=str, default="Concrete", help="Material for objects")
-
-    parsed_args = parser.parse_args()
-    return parsed_args
-
-
-# Parse arguments
-args = parse_arguments()
-
-# Assign parsed arguments to variables
-e57_input = args.e57_input
-e57_file_names = args.e57_files
-xyz_filenames = args.xyz_files
-dilute_pointcloud = args.dilute
-exterior_scan = args.exterior_scan
-dilution_factor = args.dilution_factor
-pc_resolution = args.pc_resolution
-grid_coefficient = args.grid_coefficient
-
-bfs_thickness = args.bfs_thickness
-tfs_thickness = args.tfs_thickness
-
-min_wall_length = args.min_wall_length
-min_wall_thickness = args.min_wall_thickness
-max_wall_thickness = args.max_wall_thickness
-exterior_walls_thickness = args.exterior_walls_thickness
-
-ifc_output_file = args.output_ifc
-ifc_project_name = args.ifc_project_name
-ifc_project_long_name = args.ifc_project_long_name
-ifc_project_version = args.ifc_project_version
-
-ifc_author_name = args.ifc_author_name
-ifc_author_surname = args.ifc_author_surname
-ifc_author_organization = args.ifc_author_organization
-
-ifc_building_name = args.ifc_building_name
-ifc_building_type = args.ifc_building_type
-ifc_building_phase = args.ifc_building_phase
-
-ifc_site_latitude = tuple(args.ifc_site_latitude)
-ifc_site_longitude = tuple(args.ifc_site_longitude)
-ifc_site_elevation = args.ifc_site_elevation
-
-material_for_objects = args.material_for_objects
-# colours for the openings
+# === Static Settings ===
+# colours for model
 door_colour_rgb = (0.541, 0.525, 0.486)
 window_colour_rgb = (0.761, 0.933, 1.0)
 column_colour_rgb = (0.596,0.576,1.0)
 beam_colour_rgb =  (0.157,0.478,0.0)
 
-# Initiate the logger
+# === Logger ===
 last_time = time.time()
 log_filename = "log.txt"
 
@@ -283,7 +223,7 @@ for idx, slab in enumerate(slabs):
             zone_number += 1
 
 # Column definition for IFC
-'''columns_example = [
+columns_example = [
     {
         "name": "round", # other classes "rect", "steel"
         "storey": 1,
@@ -301,10 +241,10 @@ for column in columns_example:
     ifc_column = ifc_model.create_column(f"C{column_id:02d}", column['name'], storeys_ifc[column['storey'] - 1], column['start_point'],
                                          column['direction'], column['profile_points'], column['height'])
     ifc_model.assign_material(ifc_column, column_material)
-    column_id +=1'''
+    column_id +=1
 
 # Beams definition for IFC
-'''# Example input parameters
+# Example input parameters
 beams_example = [
     {
         "name": "rect",      # A rectangular beam with larger dimensions
@@ -332,7 +272,7 @@ beam_id=1
 for beam in beams_example:
     ifc_model.create_beam(f"B{beam_id:02d}",beam["name"],storeys_ifc[beam["storey"] - 1],beam["start_point"],
                           beam["direction"],beam["profile_points"],beam["length"],beam_material)
-    beam_id +=1'''
+    beam_id +=1
 
 
 # Wall definition for IFC

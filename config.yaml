@@ -1,0 +1,36 @@
+e57_input: false
+e57_files: input_e57/multiple_floor.e57
+xyz_files:
+  - input_xyz/new_data/Kladno_station_floor_no_exterior.xyz
+dilute: false
+dilution_factor: 10
+exterior_scan: false
+pc_resolution: 0.002
+grid_coefficient: 5
+
+bfs_thickness: 0.3
+tfs_thickness: 0.4
+
+min_wall_length: 0.08
+min_wall_thickness: 0.05
+max_wall_thickness: 0.75
+exterior_walls_thickness: 0.3
+
+output_ifc: output_IFC/output-2.ifc
+ifc_project_name: Sample project
+ifc_project_long_name: Deconstruction of non-load-bearing elements
+ifc_project_version: version 1.0
+
+ifc_author_name: Slavek
+ifc_author_surname: Zbirovsky
+ifc_author_organization: CTU in Prague
+
+ifc_building_name: Hotel Opatov
+ifc_building_type: Hotel
+ifc_building_phase: Reconstruction
+
+ifc_site_latitude: [50, 5, 0]
+ifc_site_longitude: [4, 22, 0]
+ifc_site_elevation: 356.0
+
+material_for_objects: Concrete

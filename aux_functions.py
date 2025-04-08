@@ -1,10 +1,13 @@
 import os
+import sys
 import time
 import math
 import random
 from datetime import datetime
 from itertools import islice
 
+import argparse
+import yaml
 import cv2
 import pandas as pd
 from scipy.signal import find_peaks
@@ -14,6 +17,82 @@ import e57
 from tqdm import tqdm
 from plotting_functions import *
 
+
+def load_config_and_variables():
+    """Load YAML config passed as CLI argument, validate required keys, and return configuration variables."""
+    if len(sys.argv) < 2:
+        # Default fallback path for development
+        config_path = "config.yaml"  # nebo celá cesta
+        print("[INFO] No argument provided, using input configuration file in directory of project:", config_path)
+    else:
+        config_path = sys.argv[1]
+
+    if not os.path.isfile(config_path):
+        sys.exit(f"[ERROR] File '{config_path}' does not exist.")
+
+    try:
+        with open(config_path, 'r') as file:
+            config = yaml.safe_load(file)
+    except yaml.YAMLError as e:
+        sys.exit(f"[ERROR] Invalid YAML format in '{config_path}': {e}")
+    except Exception as e:
+        sys.exit(f"[ERROR] Failed to load configuration file: {e}")
+
+    required_keys = [
+        "e57_input", "xyz_files", "exterior_scan",
+        "dilute", "dilution_factor", "pc_resolution", "grid_coefficient",
+        "bfs_thickness", "tfs_thickness",
+        "min_wall_length", "min_wall_thickness", "max_wall_thickness", "exterior_walls_thickness",
+        "output_ifc", "ifc_project_name", "ifc_project_long_name", "ifc_project_version",
+        "ifc_author_name", "ifc_author_surname", "ifc_author_organization",
+        "ifc_building_name", "ifc_building_type", "ifc_building_phase",
+        "ifc_site_latitude", "ifc_site_longitude", "ifc_site_elevation",
+        "material_for_objects"
+    ]
+
+    if config.get("e57_input"):
+        required_keys.append("e57_files")
+
+    missing = [key for key in required_keys if key not in config]
+    if missing:
+        for key in missing:
+            print(f"[ERROR] Missing required config key: '{key}'")
+        sys.exit(1)
+
+    variables = {
+        "e57_input": config["e57_input"],
+        "xyz_filenames": config["xyz_files"],
+        "exterior_scan": config["exterior_scan"],
+        "dilute_pointcloud": config["dilute"],
+        "dilution_factor": config["dilution_factor"],
+        "pc_resolution": config["pc_resolution"],
+        "grid_coefficient": config["grid_coefficient"],
+        "bfs_thickness": config["bfs_thickness"],
+        "tfs_thickness": config["tfs_thickness"],
+        "min_wall_length": config["min_wall_length"],
+        "min_wall_thickness": config["min_wall_thickness"],
+        "max_wall_thickness": config["max_wall_thickness"],
+        "exterior_walls_thickness": config["exterior_walls_thickness"],
+        "ifc_output_file": config["output_ifc"],
+        "ifc_project_name": config["ifc_project_name"],
+        "ifc_project_long_name": config["ifc_project_long_name"],
+        "ifc_project_version": config["ifc_project_version"],
+        "ifc_author_name": config["ifc_author_name"],
+        "ifc_author_surname": config["ifc_author_surname"],
+        "ifc_author_organization": config["ifc_author_organization"],
+        "ifc_building_name": config["ifc_building_name"],
+        "ifc_building_type": config["ifc_building_type"],
+        "ifc_building_phase": config["ifc_building_phase"],
+        "ifc_site_latitude": tuple(config["ifc_site_latitude"]),
+        "ifc_site_longitude": tuple(config["ifc_site_longitude"]),
+        "ifc_site_elevation": config["ifc_site_elevation"],
+        "material_for_objects": config["material_for_objects"]
+    }
+
+    if config["e57_input"]:
+        variables["e57_file_names"] = config["e57_files"]
+
+    return variables
 
 def log(message, last_time, filename):
     current_time = time.time()
