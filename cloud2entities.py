@@ -48,6 +48,7 @@ door_colour_rgb = (0.541, 0.525, 0.486)
 window_colour_rgb = (0.761, 0.933, 1.0)
 column_colour_rgb = (0.596,0.576,1.0)
 beam_colour_rgb =  (0.157,0.478,0.0)
+stair_colour_rgb = (0.992, 0.270, 0.153)
 
 # === Logger ===
 last_time = time.time()
@@ -222,7 +223,7 @@ for idx, slab in enumerate(slabs):
                                                space_data["height"])
             zone_number += 1
 
-# Column definition for IFC
+'''# Column definition for IFC
 columns_example = [
     {
         "name": "round", # other classes "rect", "steel"
@@ -272,8 +273,25 @@ beam_id=1
 for beam in beams_example:
     ifc_model.create_beam(f"B{beam_id:02d}",beam["name"],storeys_ifc[beam["storey"] - 1],beam["start_point"],
                           beam["direction"],beam["profile_points"],beam["length"],beam_material)
-    beam_id +=1
+    beam_id +=1'''
 
+# Stairs definition for IFC
+stair_parts = [
+    {
+        "key": "flight",
+        "origin": (0.0, 0.0, 0.0),
+        "num_risers": 10,
+        "raiser_height": 0.18,
+        "tread_length": 0.25,
+        "flight_width": 1.2,
+        "storey": 1
+    }
+]
+
+stair_material, stair_material_def_rep= ifc_model.create_material_with_color("Stair material",
+                                                                               stair_colour_rgb, transparency=0)
+
+stair = ifc_model.create_stair("Stair_001",storeys_ifc[stair_parts[0]["storey"] - 1],stair_parts,stair_material)
 
 # Wall definition for IFC
 for wall in walls:
@@ -311,7 +329,7 @@ for wall in walls:
     # assign_object = ifc_model.assign_product_to_storey(wall, storeys_ifc[0])
     assign_object = ifc_model.assign_product_to_storey(wall, storeys_ifc[current_story - 1])
     wall_ext_int_parameter = ifc_model.create_property_single_value("IsExternal",wall_label == 'exterior')
-    ifc_model.create_property_set(wall, wall_ext_int_parameter)
+    ifc_model.create_property_set(wall, wall_ext_int_parameter, 'pset_wall')
 
     # Create materials
     window_material, window_material_def_rep = ifc_model.create_material_with_color(

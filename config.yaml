@@ -1,7 +1,8 @@
 e57_input: false
-e57_files: input_e57/multiple_floor.e57
+e57_files:
+  - input_e57/werk_satny_vstup.e57
 xyz_files:
-  - input_xyz/new_data/Kladno_station_floor_no_exterior.xyz
+  - input_xyz/new_data/Zurich_dataset_synth3_wall_005.xyz
 dilute: false
 dilution_factor: 10
 exterior_scan: false

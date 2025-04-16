@@ -796,9 +796,13 @@ def adjust_segments(segments):
 def convert_to_dictionary(final_spaces):
     zone_dict = {}
 
-    for space, walls in final_spaces.items():
+    for space, walls_local in final_spaces.items():
         ordered_points = []
-        remaining_walls = walls[:]
+        remaining_walls = walls_local[:]
+
+        if not remaining_walls:
+            print(f"Warning: No walls_local found in space {space}. Skipping this space.")
+            continue  # skip to next space if there are no walls_local
 
         first_wall = remaining_walls.pop(0)
         first_wall['start_point'] = tuple(map(float, first_wall['start_point']))
@@ -855,8 +859,8 @@ def convert_to_dictionary(final_spaces):
         # Store the ordered points in the desired format
         zone_dict[space] = {
             'vertices': ordered_points,
-            'height': walls[-1]['height'],
-            'storey': walls[-1]['storey']
+            'height': walls_local[-1]['height'],
+            'storey': walls_local[-1]['storey']
         }
     return zone_dict
 
@@ -918,7 +922,6 @@ def identify_zones(walls_local, snapping_distance=0.5, plot_zones=True):
 
     # Adjust geometry and crop the lines to intersection
     final_spaces = adjust_segments(new_space_dimensions)
-    print(space_name)
     pass
     if plot_zones:
         plot_space_segments(final_spaces)

@@ -6,7 +6,6 @@ import random
 from datetime import datetime
 from itertools import islice
 
-import argparse
 import yaml
 import cv2
 import pandas as pd
@@ -278,7 +277,7 @@ def identify_slabs(points_xyz, points_rgb, bottom_floor_slab_thickness, top_floo
         idx_selected_xyz = np.where((z < points_xyz[:, 2]) & (points_xyz[:, 2] < (z + z_step)))[0]
         z_array.append(z)
         n_points_array.append(len(idx_selected_xyz))
-    max_n_points_array = 0.5 * max(n_points_array)
+    max_n_points_array = 0.6 * max(n_points_array)
 
     # plot_point_cloud_data(points_xyz, n_points_array, z_array, max_n_points_array, z_step)
 
@@ -1142,6 +1141,7 @@ def identify_wall_faces(wall_number, points, wall_label, point_cloud_resolution,
             y2 = y1
         else:
             print(f"No peaks found for wall {wall_number}.")
+            return None, None
 
     # Plotting
     if plot_histograms_for_walls:
@@ -1199,9 +1199,20 @@ def assign_points_to_walls(x_coords, y_coords, z_coords, wall_axes, parallel_gro
     line_starts = np.array([axis[0] for axis in wall_axes])
     line_ends = np.array([axis[1] for axis in wall_axes])
 
-    # Calculate distances for all points to each wall axis in a vectorized manner
-    all_distances = np.array(
-        [distance_points_to_line_np(valid_points[:, :2], start, end) for start, end in zip(line_starts, line_ends)])
+    all_distances = []
+
+    batch_size = 1_000_000
+    n_points = valid_points.shape[0]
+
+    for start, end in zip(line_starts, line_ends):
+        distances_for_wall = []
+        for i in range(0, n_points, batch_size):
+            batch = valid_points[i:i + batch_size, :2]
+            distances = distance_points_to_line_np(batch, start, end)
+            distances_for_wall.append(distances)
+        all_distances.append(np.concatenate(distances_for_wall))
+
+    all_distances = np.stack(all_distances)
 
     # Determine the closest wall for each point
     min_distances = np.min(all_distances, axis=0)

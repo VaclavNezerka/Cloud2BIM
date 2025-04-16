@@ -8,7 +8,6 @@ import datetime
 import uuid
 import math
 
-
 class IFCmodel:
     def __init__(self, project_name, output_file):
         self.project_name = project_name
@@ -35,7 +34,7 @@ class IFCmodel:
         self.ifc_file.header.file_name.author = (self.author_name,)
         self.ifc_file.header.file_name.organization = (self.author_organization,)
         self.ifc_file.header.file_name.preprocessor_version = 'IfcOpenShell {0}'.format(ifcopenshell.version)
-        self.ifc_file.header.file_name.originating_system = 'Cloud2BIM'
+        self.ifc_file.header.file_name.originating_system = 'CTU in Prague - Cloud2BIM - 1.1'
         self.ifc_file.header.file_name.authorization = 'None'
 
     @staticmethod
@@ -408,13 +407,19 @@ class IFCmodel:
             axis=self.ifc_file.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0)),
             ref_direction=self.ifc_file.create_entity("IfcDirection", DirectionRatios=(1.0, 0.0, 0.0))
         )
-        axis_placement_slab_for_extrusion = self.create_local_placement((0.0, 0.0, 0.0))
+        # create an IfcAxis2Placement3D directly for the extrusion.
+        axis_placement_extrusion = self.ifc_file.create_entity(
+            "IfcAxis2Placement3D",
+            Location=self.ifc_file.create_entity("IfcCartesianPoint", Coordinates=(0.0, 0.0, 0.0)),
+            Axis=self.ifc_file.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0)),
+            RefDirection=self.ifc_file.create_entity("IfcDirection", DirectionRatios=(1.0, 0.0, 0.0))
+        )
         slab_extrusion_direction = self.ifc_file.create_entity(
             "IfcDirection",
             DirectionRatios=(0.0, 0.0, 1.0)
         )
         # [MODIFIED] Create extruded solid using the helper
-        slab_extrusion = self.create_extruded_solid(polyline_profile, axis_placement_slab_for_extrusion, slab_extrusion_direction, slab_height)
+        slab_extrusion = self.create_extruded_solid(polyline_profile, axis_placement_extrusion, slab_extrusion_direction, slab_height)
         shape_rep = self.create_shape_representation(self.geom_rep_sub_context, "Body", "SweptSolid", [slab_extrusion])
         slab = self.ifc_file.create_entity(
             "IfcSlab",
@@ -595,12 +600,12 @@ class IFCmodel:
         )
         return wall_type, rel_defines_by_type, rel_declares
 
-    def create_property_set(self, related_object, properties):
+    def create_property_set(self, related_object, properties, name_local):
         property_set = self.ifc_file.create_entity(
             "IfcPropertySet",
             GlobalId=self.generate_guid(),
             OwnerHistory=self.owner_history,
-            Name=None,
+            Name=name_local,
             Description=None,
             HasProperties=[properties]
         )
@@ -642,11 +647,15 @@ class IFCmodel:
         return opening_standard_case
 
     def opening_placement(self, wall_start_point, wall_placement):
+        axis = self.ifc_file.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0))  # Z-axis
+        ref_direction = self.ifc_file.create_entity("IfcDirection", DirectionRatios=(1.0, 0.0, 0.0))  # X-axis
+
         axis_placement_window = self.ifc_file.create_entity(
             "IfcAxis2Placement3D",
-            Location=self.ifc_file.create_entity("IfcCartesianPoint", Coordinates=(wall_start_point[0], wall_start_point[1], 0.0)),
-            Axis=None,
-            RefDirection=None
+            Location=self.ifc_file.create_entity("IfcCartesianPoint",
+                                                 Coordinates=(wall_start_point[0], wall_start_point[1], 0.0)),
+            Axis = axis,
+            RefDirection = ref_direction
         )
         window_placement = self.ifc_file.create_entity(
             "IfcLocalPlacement",
@@ -699,8 +708,8 @@ class IFCmodel:
                 "IfcAxis2Placement3D",
                 Location=self.ifc_file.create_entity("IfcCartesianPoint", Coordinates=(direction_x * offset_from_start,
                                                                                        direction_y * offset_from_start, opening_sill_height)),
-                Axis=None,
-                RefDirection=self.ifc_file.createIfcDirection((direction_x, direction_y))
+                Axis=self.ifc_file.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0)),
+                RefDirection=self.ifc_file.createIfcDirection((direction_x, direction_y, 0.0))
             ),
             extrusion_direction=self.ifc_file.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0)),
             depth=opening_height
@@ -719,15 +728,15 @@ class IFCmodel:
         )
         return rel_voids_element
 
-    def create_rel_fills_element(self, relating_building_element, related_opening_element):
+    def create_rel_fills_element(self, opening_element, filling_element):
         rel_fills_element = self.ifc_file.create_entity(
             "IfcRelFillsElement",
             GlobalId=self.generate_guid(),
             OwnerHistory=self.owner_history,
             Name=None,
             Description=None,
-            RelatingOpeningElement=related_opening_element,
-            RelatedBuildingElement=relating_building_element
+            RelatingOpeningElement=opening_element,
+            RelatedBuildingElement=filling_element
         )
         return rel_fills_element
 
@@ -1089,7 +1098,7 @@ class IFCmodel:
         )
         return beam
 
-    def create_beam(self,beam_id, type_name, storey, placement_coords, vector_direction, points_2d, length, material):
+    def create_beam(self, beam_id, type_name, storey, placement_coords, vector_direction, points_2d, length, material):
         # Placement
         ifc_axis = self.ifc_file.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0))
         rotation = self.ifc_file.create_entity("IfcDirection", DirectionRatios=vector_direction)
@@ -1105,6 +1114,225 @@ class IFCmodel:
         self.assign_material(beam, material)
         # Relationships
         self.assign_product_to_storey(beam, storey)
+
+    def create_stairs_entity(self, stairs_id_local):
+        stairs = self.ifc_file.create_entity(
+            "IfcStair",
+            GlobalId=self.generate_guid(),
+            OwnerHistory=self.owner_history,
+            Name=stairs_id_local,
+            Description=None,
+            ObjectType=None,
+            ObjectPlacement=None,
+            Representation=None,
+            Tag=None,
+            PredefinedType="NOTDEFINED"  # https://standards.buildingsmart.org/IFC/DEV/IFC4_2/FINAL/HTML/schema/ifcsharedbldgelements/lexical/ifcstairtypeenum.htm
+        )
+        return stairs
+
+    def create_stair_member(self, placement, geometry):
+        stair_member = self.ifc_file.create_entity(
+            "IfcMember",
+            GlobalId=self.generate_guid(),
+            OwnerHistory=self.owner_history,
+            Name=None,
+            ObjectPlacement=placement,
+            Representation=geometry,
+            PredefinedType="NOTDEFINED"
+        )
+        return stair_member
+
+    def create_landing_slab(self, placement, geometry):
+        landing = self.ifc_file.create_entity(
+            "IfcSlab",
+            GlobalId=self.generate_guid(),
+            OwnerHistory=self.owner_history,
+            Name=None,
+            ObjectPlacement=placement,
+            Representation=geometry,
+            PredefinedType="LANDING"
+        )
+        return landing
+
+    def create_stair_member_representation(self, number_of_raisers, raiser_height, tread_length, flight_width):
+        """
+        number_of_raiser: Total number of vertical elements (e.g., 15 risers).
+        riser_height: Vertical height of a single riser, in meters (e.g., 0.17 m).
+        tread_length: Horizontal depth of each tread (also called "going"), e.g., 0.25 m.
+        flight_width: Total width of the stair flight (e.g., 1.2 m).
+        """
+        # === Context
+        context = self.geom_rep_sub_context  # usually set from the model's IfcProject
+        vertices = []
+        vertex_index_map = {}
+        faces = []
+
+        def add_vertex(coord):
+            """Add vertex only if it doesn't exist yet, return its index."""
+            if coord in vertex_index_map:
+                return vertex_index_map[coord]
+            index = len(vertices)
+            vertices.append(coord)
+            vertex_index_map[coord] = index
+            return index
+
+        # Step 1: Front risers and top treads
+        for i in range(number_of_raisers):
+            x = i * tread_length
+            z = i * raiser_height
+            z_top = (i + 1) * raiser_height
+
+            # Front riser
+            A = (x, 0.0, z)
+            B = (x, 0.0, z_top)
+            C = (x, flight_width, z)
+            D = (x, flight_width, z_top)
+
+            idx_A = add_vertex(A)
+            idx_B = add_vertex(B)
+            idx_C = add_vertex(C)
+            idx_D = add_vertex(D)
+
+            front_face = [idx_A, idx_B, idx_D, idx_C]
+            faces.append(front_face)
+
+            # Tread surface
+            x_next = (i + 1) * tread_length
+            E = (x_next, 0.0, z_top)
+            F = (x_next, flight_width, z_top)
+
+            idx_E = add_vertex(E)
+            idx_F = add_vertex(F)
+
+            tread_face = [idx_B, idx_E, idx_F, idx_D]
+            faces.append(tread_face)
+
+            if i == 0:
+                first_A_idx = idx_A
+                first_C_idx = idx_C
+
+            if i == number_of_raisers - 1:
+                last_E_idx = idx_E
+                last_F_idx = idx_F
+
+        # Step 2: Create left side panel (Y = 0.0)
+        X = (number_of_raisers * tread_length, 0.0, (number_of_raisers - 1) * raiser_height)
+        Y = (tread_length, 0.0, 0.0)
+
+        idx_X = add_vertex(X)
+        idx_Y = add_vertex(Y)
+
+        left_side_points = [(idx, coord) for idx, coord in enumerate(vertices) if coord[1] == 0.0]
+        left_side_points.sort(key=lambda tup: (tup[1][2], tup[1][0]))
+        left_face_indices = [idx for idx, _ in left_side_points]
+        left_face_indices.extend([idx_X, idx_Y])
+        faces.append(left_face_indices)
+
+        # Step 3: Create right side panel (Y = flight_width)
+        X_r = (number_of_raisers * tread_length, flight_width, (number_of_raisers - 1) * raiser_height)
+        Y_r = (tread_length, flight_width, 0.0)
+
+        idx_X_r = add_vertex(X_r)
+        idx_Y_r = add_vertex(Y_r)
+
+        right_side_points = [(idx, coord) for idx, coord in enumerate(vertices) if coord[1] == flight_width]
+        right_side_points.sort(key=lambda tup: (tup[1][2], tup[1][0]))
+        right_face_indices = [idx for idx, _ in right_side_points]
+        right_face_indices.extend([idx_X_r, idx_Y_r])
+        faces.append(right_face_indices)
+
+        # Step 4: Bottom face (connecting first A+C and bottom edge)
+        bottom_face = [idx_Y, idx_Y_r, first_C_idx, first_A_idx]
+        faces.append(bottom_face)
+
+        # Step 5: Back vertical face (last riser)
+        back_face = [idx_X, idx_X_r, last_F_idx, last_E_idx]
+        faces.append(back_face)
+
+        # Step 6: Back underside face
+        back_bottom_face = [idx_Y, idx_Y_r, idx_X_r, idx_X]
+        faces.append(back_bottom_face)
+
+        # --- Create IFC entities ---
+
+        # Create the point list. The vertices remain unchanged.
+        point_list = self.ifc_file.create_entity("IfcCartesianPointList3D", CoordList=vertices)
+
+        indexed_faces = []
+        # IMPORTANT: Adjust indices from 0-based to 1-based by adding 1 to each value.
+        for face in faces:
+            one_based_face = [index + 1 for index in face]
+            face_entity = self.ifc_file.create_entity("IfcIndexedPolygonalFace", CoordIndex=one_based_face)
+            indexed_faces.append(face_entity)
+
+        polygonfaceset = self.ifc_file.create_entity(
+            "IfcPolygonalFaceSet",
+            Coordinates=point_list,
+            Closed=True,
+            Faces=indexed_faces
+        )
+
+        tessellation = self.ifc_file.create_entity(
+            "IfcShapeRepresentation",
+            ContextOfItems=self.geom_rep_sub_context,
+            RepresentationIdentifier="Body",
+            RepresentationType="Tessellation",
+            Items=[polygonfaceset]
+        )
+
+        shape = self.ifc_file.create_entity(
+            "IfcProductDefinitionShape",
+            Representations=[tessellation]
+        )
+
+        return shape
+
+    def relate_stair_parts(self, stair, parts):
+        rel = self.ifc_file.create_entity(
+            "IfcRelAggregates",
+            GlobalId=self.generate_guid(),
+            OwnerHistory=self.owner_history,
+            RelatingObject=stair,
+            RelatedObjects=parts
+        )
+        return rel
+
+    def create_stair(self, stair_id, storey, stair_parts, material):
+        # Create a local placement for each part based on the provided origin
+        for part in stair_parts:
+            part["placement"] = self.create_local_placement(coordinates=part["origin"])
+
+        # Generate geometry for each part if none is provided
+        for part in stair_parts:
+            if part["key"] == "flight":
+                part["geometry_representation"] = self.create_stair_member_representation(part["num_risers"],
+                                                                                          part["raiser_height"],
+                                                                                          part["tread_length"],
+                                                                                          part["flight_width"])
+            elif part["key"] == "landing":
+                part["geometry_representation"] = self.create_landing_slab()
+
+        # Create the logical stair container (IfcStair)
+        stair = self.create_stairs_entity(stair_id)
+
+        # Create and collect individual stair parts (flights and landings)
+        parts = []
+        for part in stair_parts:
+            if part["key"] == "flight":
+                flight = self.create_stair_member(part["placement"], part["geometry_representation"])
+                parts.append(flight)
+            elif part["key"] == "landing":
+                landing = self.create_landing_slab(part["placement"], part["geometry_representation"])
+                parts.append(landing)
+
+        # Create an aggregation relationship between the stair container and its parts
+        self.relate_stair_parts(stair, parts)
+        # Assign material to the stair
+        self.assign_material(stair, material)
+        # Relate the stair to the storey
+        self.assign_product_to_storey(stair, storey)
+
+        return stair
 
     def write(self):
         self.ifc_file.write(self.output_file)
