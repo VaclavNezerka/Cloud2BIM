@@ -280,7 +280,7 @@ stair_parts = [
     {
         "key": "flight",
         "origin": (0.0, 0.0, 0.0),
-        "num_risers": 10,
+        "num_risers": 5,
         "raiser_height": 0.18,
         "tread_length": 0.25,
         "flight_width": 1.2,
@@ -329,7 +329,7 @@ for wall in walls:
     # assign_object = ifc_model.assign_product_to_storey(wall, storeys_ifc[0])
     assign_object = ifc_model.assign_product_to_storey(wall, storeys_ifc[current_story - 1])
     wall_ext_int_parameter = ifc_model.create_property_single_value("IsExternal",wall_label == 'exterior')
-    ifc_model.create_property_set(wall, wall_ext_int_parameter, 'pset_wall')
+    ifc_model.create_property_set(wall, wall_ext_int_parameter, 'wall properties')
 
     # Create materials
     window_material, window_material_def_rep = ifc_model.create_material_with_color(

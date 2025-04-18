@@ -284,6 +284,7 @@ class IFCmodel:
             ObjectType=self.object_type,
             Description=self.project_description,
             Phase=self.construction_phase,
+            RepresentationContexts=[self.context],
             UnitsInContext=unit_assignment,
         )
 
@@ -568,7 +569,7 @@ class IFCmodel:
             ObjectPlacement=wall_placement,
             Representation=product_definition_shape,
             Tag="Wall Tag",
-            PredefinedType="STANDARD"
+            PredefinedType=None
         )
         return ifc_wall
 
@@ -585,7 +586,7 @@ class IFCmodel:
             RepresentationMaps=None,
             Tag="Wall Type Tag",
             ElementType="Wall Type",
-            PredefinedType="STANDARD"
+            PredefinedType="SOLIDWALL"
         )
         rel_defines_by_type = self.create_rel_defines_by_type(ifc_wall, wall_type,
                                                               "Relation between Wall and WallType", None)
@@ -1130,9 +1131,9 @@ class IFCmodel:
         )
         return stairs
 
-    def create_stair_member(self, placement, geometry):
+    def create_stair_flight(self, placement, geometry):
         stair_member = self.ifc_file.create_entity(
-            "IfcMember",
+            "IfcStairFlight",
             GlobalId=self.generate_guid(),
             OwnerHistory=self.owner_history,
             Name=None,
@@ -1161,8 +1162,6 @@ class IFCmodel:
         tread_length: Horizontal depth of each tread (also called "going"), e.g., 0.25 m.
         flight_width: Total width of the stair flight (e.g., 1.2 m).
         """
-        # === Context
-        context = self.geom_rep_sub_context  # usually set from the model's IfcProject
         vertices = []
         vertex_index_map = {}
         faces = []
@@ -1216,16 +1215,23 @@ class IFCmodel:
                 last_F_idx = idx_F
 
         # Step 2: Create left side panel (Y = 0.0)
-        X = (number_of_raisers * tread_length, 0.0, (number_of_raisers - 1) * raiser_height)
-        Y = (tread_length, 0.0, 0.0)
+        # Key corner points
+        X = (number_of_raisers * tread_length, 0.0, (number_of_raisers - 1) * raiser_height)  # step-back corner
+        Y = (tread_length, 0.0, 0.0)  # bottom forward closure
 
         idx_X = add_vertex(X)
         idx_Y = add_vertex(Y)
 
-        left_side_points = [(idx, coord) for idx, coord in enumerate(vertices) if coord[1] == 0.0]
-        left_side_points.sort(key=lambda tup: (tup[1][2], tup[1][0]))
+        # Filter out X and Y if already in vertex list (to avoid duplication)
+        left_side_points = [
+            (idx, coord) for idx, coord in enumerate(vertices)
+            if coord[1] == 0.0 and coord not in [X, Y]
+        ]
+
+        # Final face indices
         left_face_indices = [idx for idx, _ in left_side_points]
         left_face_indices.extend([idx_X, idx_Y])
+
         faces.append(left_face_indices)
 
         # Step 3: Create right side panel (Y = flight_width)
@@ -1235,10 +1241,16 @@ class IFCmodel:
         idx_X_r = add_vertex(X_r)
         idx_Y_r = add_vertex(Y_r)
 
-        right_side_points = [(idx, coord) for idx, coord in enumerate(vertices) if coord[1] == flight_width]
-        right_side_points.sort(key=lambda tup: (tup[1][2], tup[1][0]))
+        # Filter out X and Y if already in vertex list (to avoid duplication)
+        right_side_points = [
+            (idx, coord) for idx, coord in enumerate(vertices)
+            if coord[1] == flight_width and coord not in [X_r, Y_r]
+        ]
+
+        # Final face indices
         right_face_indices = [idx for idx, _ in right_side_points]
         right_face_indices.extend([idx_X_r, idx_Y_r])
+
         faces.append(right_face_indices)
 
         # Step 4: Bottom face (connecting first A+C and bottom edge)
@@ -1265,7 +1277,7 @@ class IFCmodel:
             face_entity = self.ifc_file.create_entity("IfcIndexedPolygonalFace", CoordIndex=one_based_face)
             indexed_faces.append(face_entity)
 
-        polygonfaceset = self.ifc_file.create_entity(
+        polygon_face_set = self.ifc_file.create_entity(
             "IfcPolygonalFaceSet",
             Coordinates=point_list,
             Closed=True,
@@ -1277,7 +1289,7 @@ class IFCmodel:
             ContextOfItems=self.geom_rep_sub_context,
             RepresentationIdentifier="Body",
             RepresentationType="Tessellation",
-            Items=[polygonfaceset]
+            Items=[polygon_face_set]
         )
 
         shape = self.ifc_file.create_entity(
@@ -1319,7 +1331,7 @@ class IFCmodel:
         parts = []
         for part in stair_parts:
             if part["key"] == "flight":
-                flight = self.create_stair_member(part["placement"], part["geometry_representation"])
+                flight = self.create_stair_flight(part["placement"], part["geometry_representation"])
                 parts.append(flight)
             elif part["key"] == "landing":
                 landing = self.create_landing_slab(part["placement"], part["geometry_representation"])
@@ -1328,7 +1340,8 @@ class IFCmodel:
         # Create an aggregation relationship between the stair container and its parts
         self.relate_stair_parts(stair, parts)
         # Assign material to the stair
-        self.assign_material(stair, material)
+        for part in parts:
+            self.assign_material(part, material)
         # Relate the stair to the storey
         self.assign_product_to_storey(stair, storey)
 
