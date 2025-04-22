@@ -10,11 +10,36 @@ import yaml
 import cv2
 import pandas as pd
 from scipy.signal import find_peaks
-from skimage.morphology import closing, footprint_rectangle
+from skimage.morphology import closing
+from skimage.morphology import rectangle as skimage_rectangle
 import open3d as o3d
 import e57
 from tqdm import tqdm
-from plotting_functions import *
+
+# Create empty plotting functions to prevent import errors
+def plot_2d_histogram(*args, **kwargs): pass
+def plot_shifted_mask(*args, **kwargs): pass
+def plot_smoothed_contour(*args, **kwargs): pass
+def plot_point_cloud_data(*args, **kwargs): pass
+def plot_horizontal_surfaces(*args, **kwargs): pass
+def plot_histogram(*args, **kwargs): pass
+def plot_binary_image(*args, **kwargs): pass
+def plot_contours(*args, **kwargs): pass
+def plot_segments_with_random_colors(*args, **kwargs): pass
+def plot_parallel_wall_groups(*args, **kwargs): pass
+def plot_segments_with_candidates(*args, **kwargs): pass
+def plot_wall(*args, **kwargs): pass
+def plot_histogram_with_threshold(*args, **kwargs): pass
+
+# Try to import actual plotting functions if available
+try:
+    from src.core.Cloud2BIM.plotting_functions import *
+except ImportError:
+    try:
+        from plotting_functions import *
+    except ImportError:
+        # Use the empty placeholder functions defined above
+        pass
 
 
 def load_config_and_variables():
@@ -151,12 +176,20 @@ def save_xyz(points, output_file_name):
     print('Points saved as %s' % output_file_name)
 
 
-def load_selective_lines(filename, step):
+def load_selective_linesx(filename, step):
     with open(filename, 'r') as file:
         # Skip the first line
         next(file)
         lines = (line.strip().split('\t') for line in islice(file, 0, None, step))
         return [[float(element) for element in line] for line in lines]
+
+def load_selective_lines(filename, step):
+    with open(filename, 'r') as file:
+        # Skip the first line
+        next(file)
+        lines = (line.strip().split(' ') for line in islice(file, 0, None, step))
+        return [[float(element) for element in line] for line in lines]
+
 
 
 def load_xyz_file(file_name, plot_xyz=False, select_ith_lines=True, ith_lines=20):
@@ -921,7 +954,7 @@ def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minim
 
     # Pre-process the binary image
     print("Pre-processing the binary image")
-    binary_image = closing(binary_image, footprint_rectangle((5, 5))) # closes small holes in the binary mask
+    binary_image = closing(binary_image, skimage_rectangle(5, 5)) # closes small holes in the binary mask
     # plot_binary_image(binary_image)
 
     # Find contours in the binary image

@@ -2,7 +2,7 @@ e57_input: false
 e57_files:
   - input_e57/werk_satny_vstup.e57
 xyz_files:
-  - input_xyz/new_data/Zurich_dataset_synth3_wall_005.xyz
+  - /home/fothar/cloud2bim/input_xyz/scan6.xyz
 dilute: false
 dilution_factor: 10
 exterior_scan: false
@@ -17,7 +17,7 @@ min_wall_thickness: 0.05
 max_wall_thickness: 0.75
 exterior_walls_thickness: 0.3
 
-output_ifc: output_IFC/output-2.ifc
+output_ifc: output_IFC/output-3.ifc
 ifc_project_name: Sample project
 ifc_project_long_name: Deconstruction of non-load-bearing elements
 ifc_project_version: version 1.0

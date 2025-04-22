@@ -1,0 +1,4 @@
+*.txt
+__pycache__/*
+output_xyz/*
+output_IFC/*
