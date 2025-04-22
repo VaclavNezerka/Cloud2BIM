@@ -402,7 +402,7 @@ def identify_slabs(points_xyz, points_rgb, bottom_floor_slab_thickness, top_floo
             print('Slab no. %d: bottom (z-coordinate) = %.3f m, thickness = %0.1f mm'
                   % ((i + 1) / 2, slab_bottom_z_coord, top_floor_ceiling_thickness * 1000))
 
-        save_xyz(horiz_surface_planes[i], 'output_xyz/horiz_surface_%d.xyz' % (i + 1))
+        #save_xyz(horiz_surface_planes[i], 'output_xyz/horiz_surface_%d.xyz' % (i + 1))
 
     # plot the segmented plane
     pcd = []

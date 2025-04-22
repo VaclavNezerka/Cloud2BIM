@@ -17,6 +17,54 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def read_point_cloud(xyz_filenames, e57_input=False, e57_file_names=None, 
+                    dilute_pointcloud=True, dilution_factor=5, log_filename="log.txt"):
+    """
+    Read point cloud data from XYZ or E57 files.
+    
+    Args:
+        xyz_filenames: List of XYZ filenames to read
+        e57_input: Whether input is in E57 format
+        e57_file_names: List of E57 filenames (if e57_input is True)
+        dilute_pointcloud: Whether to reduce point cloud density
+        dilution_factor: Factor by which to reduce point cloud density
+        log_filename: File to log progress information
+        
+    Returns:
+        tuple: (points_xyz, points_rgb, last_time)
+    """
+    last_time = time.time()
+    
+    # SECTION: Import Point Clouds
+    # Read e57 files and create xyz
+    if e57_input and e57_file_names:
+        for (idx, e57_file_name) in enumerate(e57_file_names):
+            last_time = log('Reading %s.' % e57_file_name, last_time, log_filename)
+            imported_e57_data = read_e57(e57_file_name)
+            e57_data_to_xyz(imported_e57_data, xyz_filenames[idx], chunk_size=1e10)
+            last_time = log('File %s converted to ASCII format, saved as %s.' % 
+                         (e57_file_name, xyz_filenames[idx]), last_time, log_filename)
+
+    # Read xyz files
+    points_xyz, points_rgb = np.empty((0, 3)), np.empty((0, 3))
+    for xyz_filename in xyz_filenames:
+        last_time = log('Extracting data from %s...' % xyz_filename, last_time, log_filename)
+        points_xyz_temp, points_rgb_temp = load_xyz_file(xyz_filename, plot_xyz=False, 
+                                                       select_ith_lines=dilute_pointcloud,
+                                                       ith_lines=dilution_factor)
+        points_xyz = np.vstack((points_xyz, np.array(points_xyz_temp)))
+        # points_rgb = np.vstack((points_rgb, np.array(points_rgb_temp)))
+    
+    points_xyz = np.round(points_xyz, 3)  # round the xyz coordinates to 3 decimals
+    last_time = log('All point cloud data imported.', last_time, log_filename)
+    
+    return points_xyz, points_rgb, last_time
+
 
 class Cloud2BIM:
     """
@@ -41,12 +89,14 @@ class Cloud2BIM:
         """Load configuration settings from a YAML file"""
         return load_config_and_variables()
         
-    def process_point_cloud(self, config):
+    def process_point_cloud(self, config, points_xyz, points_rgb=None):
         """
         Process the point cloud data to extract building elements.
         
         Args:
             config: Dictionary containing configuration parameters
+            points_xyz: Optional pre-loaded point cloud XYZ data (if None, will load from files)
+            points_rgb: Optional pre-loaded point cloud RGB data (if None, will load from files)
             
         Returns:
             dict: A dictionary containing all processed building elements
@@ -55,13 +105,7 @@ class Cloud2BIM:
         result = {}
         
         # Extract configuration parameters
-        e57_input = config["e57_input"]
-        if e57_input:
-            e57_file_names = config["e57_file_names"]
-        xyz_filenames = config["xyz_filenames"]
         exterior_scan = config["exterior_scan"]
-        dilute_pointcloud = config["dilute_pointcloud"]
-        dilution_factor = config["dilution_factor"]
         pc_resolution = config["pc_resolution"]
         grid_coefficient = config["grid_coefficient"]
         bfs_thickness = config["bfs_thickness"]
@@ -71,26 +115,7 @@ class Cloud2BIM:
         max_wall_thickness = config["max_wall_thickness"]
         exterior_walls_thickness = config["exterior_walls_thickness"]
         
-        # SECTION: Import Point Clouds
-        # read e57 files and create xyz
-        if e57_input:
-            for (idx, e57_file_name) in enumerate(e57_file_names):
-                last_time = log('Reading %s.' % e57_file_name, last_time, self.log_filename)
-                imported_e57_data = read_e57(e57_file_name)
-                e57_data_to_xyz(imported_e57_data, xyz_filenames[idx], chunk_size=1e10)
-                last_time = log('File %s converted to ASCII format, saved as %s.' % (e57_file_name, xyz_filenames[idx]),
-                                last_time, self.log_filename)
-
-        # read xyz file
-        points_xyz, points_rgb = np.empty((0, 3)), np.empty((0, 3))
-        for xyz_filename in xyz_filenames:
-            last_time = log('Extracting data from %s...' % xyz_filename, last_time, self.log_filename)
-            points_xyz_temp, points_rgb_temp = load_xyz_file(xyz_filename, plot_xyz=False, select_ith_lines=dilute_pointcloud,
-                                                             ith_lines=dilution_factor)
-            points_xyz = np.vstack((points_xyz, np.array(points_xyz_temp)))
-            # points_rgb = np.vstack((points_rgb, np.array(points_rgb_temp)))
-        points_xyz = np.round(points_xyz, 3)  # round the xyz coordinates to 3 decimals
-        last_time = log('All point cloud data imported.', last_time, self.log_filename)
+        
 
         # SECTION: Segment Slabs and Split the Point Cloud to Storeys
         print("-" * 50)
@@ -276,6 +301,8 @@ class Cloud2BIM:
             ifc_space_placement = ifc_model.space_placement(slab_position)
             if idx != len(slabs) - 1:  # avoid creating zones on the uppermost slab
                 zone_number = 1
+
+                logger.info(f"Saved {idx} points to {zones}")
                 for space_name, space_data in zones[idx].items():  # Iterate over each space dictionary inside the zone
                     # Create the space using the data from the space dictionary
                     ifc_space = ifc_model.create_space(space_data, ifc_space_placement, (idx + 1), zone_number, storeys_ifc[-1],
@@ -427,10 +454,27 @@ def main():
     # Step 1: Read configuration
     config = converter.read_config()
     
-    # Step 2: Process the point cloud
-    building_elements = converter.process_point_cloud(config)
+    # Step 2: Read the point cloud data
+    points_xyz, points_rgb, _ = read_point_cloud(
+        config["xyz_filenames"], 
+        e57_input=config["e57_input"],
+        e57_file_names=config.get("e57_file_names"),
+        dilute_pointcloud=config["dilute_pointcloud"],
+        dilution_factor=config["dilution_factor"],
+        log_filename="log.txt"
+    )
+
     
-    # Step 3: Create and save the IFC model
+    
+    # Step 3: Process the point cloud
+
+    
+
+    building_elements = converter.process_point_cloud(config, points_xyz, points_rgb)
+
+    
+    
+    # Step 4: Create and save the IFC model
     ifc_file_path = converter.create_ifc_model(config, building_elements)
     
     print(f"Process completed. IFC model saved to {ifc_file_path}")
