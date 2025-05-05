@@ -24,11 +24,16 @@ automatically use the default file `config.yaml`.
 ```
 python cloud2entities.py config.yaml
 ```
+### Dataset
+The complete original point cloud for Kladno station is available at Zenodo platform.
+```
+https://zenodo.org/records/14221915
+```
 ## Citation
 
 If you find this project or any part of it useful in your research or work, please consider citing the following preprint:
 ```
-@misc{zbirovsky2025, 
+@misc{Cloud2BIM2025, 
 title={Cloud2BIM: An open-source automatic pipeline for efficient conversion of large-scale point clouds into IFC format}, 
     author={Slávek Zbirovský and Václav Nežerka}, 
     year={2025}, 

@@ -121,7 +121,7 @@ for i, storey_pointcloud in enumerate(point_cloud_storeys):
      translated_filtered_rotated_wall_groups, wall_labels) = (
         identify_walls(storey_pointcloud, pc_resolution, min_wall_length, min_wall_thickness, max_wall_thickness,
                        z_placement, top_z_placement, grid_coefficient, slabs[i + 1]['polygon'], exterior_scan,
-                       exterior_walls_thickness=0.3))
+                       exterior_walls_thickness=0.45))
 
     print("-" * 50)
     print("Rectangular openings detection")
@@ -137,7 +137,7 @@ for i, storey_pointcloud in enumerate(point_cloud_storeys):
                                             wall_labels[j], pc_resolution, grid_coefficient,
                                             min_opening_width=0.4, min_opening_height=0.6,
                                             max_opening_aspect_ratio=4, door_z_max=0.1,
-                                            door_min_height=1.7, opening_min_z_top=1.6,
+                                            door_min_height=1.6, opening_min_z_top=1.6,
                                             plot_histograms_for_openings=False)
 
         # Temporary list to store openings for the current wall
@@ -199,7 +199,6 @@ for idx, slab in enumerate(slabs):
     points_no_duplicates = list(dict.fromkeys(tuple(pt) for pt in points))
     points_no_duplicates = [list(pt) for pt in points_no_duplicates]
 
-    # Use the refactored function to create the slab IFC entity
     # The create_slab function internally creates the slab placement, extrusion, and shape representation.
     slab_entity = ifc_model.create_slab(
         slab_name='Slab %d' % (idx + 1),
@@ -209,19 +208,25 @@ for idx, slab in enumerate(slabs):
         material_name=material_for_objects
     )
 
-    # Optionally assign the slab to a building storey later on:
     ifc_model.assign_product_to_storey(slab_entity, storeys_ifc[-1])
 
-    # order is important (without last (initial point)
-    # IFCSpace initialization
-    ifc_space_placement = ifc_model.space_placement(slab_position)
-    if idx != len(slabs) - 1:  # avoid creating zones on the uppermost slab
-        zone_number = 1
-        for space_name, space_data in zones[idx].items():  # Iterate over each space dictionary inside the zone
-            # Create the space using the data from the space dictionary
-            ifc_space = ifc_model.create_space(space_data, ifc_space_placement, (idx + 1), zone_number, storeys_ifc[-1],
-                                               space_data["height"])
-            zone_number += 1
+    # IfcSpace initialization
+    if idx < len(zones) and zones[idx]:  # this means there are some zones inside
+        ifc_space_placement = ifc_model.space_placement(slab_position)
+        if idx != len(slabs) - 1:  # avoid creating zones on the uppermost slab
+            zone_number = 1
+            for space_name, space_data in zones[idx].items():
+                ifc_space = ifc_model.create_space(
+                    space_data,
+                    ifc_space_placement,
+                    (idx + 1),
+                    zone_number,
+                    storeys_ifc[-1],
+                    space_data["height"]
+                )
+                zone_number += 1
+    else:
+        continue
 
 '''# Column definition for IFC
 columns_example = [
@@ -275,24 +280,29 @@ for beam in beams_example:
                           beam["direction"],beam["profile_points"],beam["length"],beam_material)
     beam_id +=1'''
 
-# Stairs definition for IFC
-stair_parts = [
-    {
-        "key": "flight",
-        "origin": (0.0, 0.0, 0.0),
-        "num_risers": 5,
-        "raiser_height": 0.18,
-        "tread_length": 0.25,
-        "flight_width": 1.2,
-        "storey": 1
-    }
+'''# Stairs definition for IFC
+stairs = [
+    [  # Curved stair
+        {
+            "key": "flight_curved",
+            "origin": (0.0, 0.0, 0.0),
+            "num_risers": 12,
+            "raiser_height": 0.17,
+            "angle_per_step_deg": 15,
+            "inner_radius": 1.0,
+            "flight_width": 1.2,
+            "storey": 1
+        }
+    ]
 ]
 
 stair_material, stair_material_def_rep= ifc_model.create_material_with_color("Stair material",
                                                                                stair_colour_rgb, transparency=0)
 
-stair = ifc_model.create_stair("Stair_001",storeys_ifc[stair_parts[0]["storey"] - 1],stair_parts,stair_material)
-
+for i, stair_parts in enumerate(stairs):
+    stair_name = f"Stair_{i+1:03}"
+    stair = ifc_model.create_stair(stair_name, storeys_ifc[stair_parts[0]["storey"] - 1], stair_parts, stair_material)
+'''
 # Wall definition for IFC
 for wall in walls:
     start_point = tuple(float(num) for num in wall['start_point'])
@@ -326,7 +336,6 @@ for wall in walls:
     assign_material = ifc_model.assign_material(wall, material_layer_set_usage)
     wall_type = ifc_model.create_wall_type(wall, wall_thickness)
     assign_material_2 = ifc_model.assign_material(wall_type[0], material_layer_set)
-    # assign_object = ifc_model.assign_product_to_storey(wall, storeys_ifc[0])
     assign_object = ifc_model.assign_product_to_storey(wall, storeys_ifc[current_story - 1])
     wall_ext_int_parameter = ifc_model.create_property_single_value("IsExternal",wall_label == 'exterior')
     ifc_model.create_property_set(wall, wall_ext_int_parameter, 'wall properties')

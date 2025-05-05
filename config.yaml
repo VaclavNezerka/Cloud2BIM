@@ -2,7 +2,7 @@ e57_input: false
 e57_files:
   - input_e57/werk_satny_vstup.e57
 xyz_files:
-  - input_xyz/new_data/Zurich_dataset_synth3_wall_005.xyz
+  - input_xyz/new_data/ISPR_UO2_1st.xyz
 dilute: false
 dilution_factor: 10
 exterior_scan: false
@@ -12,7 +12,7 @@ grid_coefficient: 5
 bfs_thickness: 0.3
 tfs_thickness: 0.4
 
-min_wall_length: 0.08
+min_wall_length: 0.10
 min_wall_thickness: 0.05
 max_wall_thickness: 0.75
 exterior_walls_thickness: 0.3

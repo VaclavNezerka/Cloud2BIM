@@ -333,7 +333,7 @@ def identify_slabs(points_xyz, points_rgb, bottom_floor_slab_thickness, top_floo
             slab_top_z_coord = np.median(horiz_surface_planes[i][:, 2])
             slab_bottom_z_coord = slab_top_z_coord - bottom_floor_slab_thickness
             x_coords, y_coords, polygon = create_hull_from_histogram(horiz_surface_planes[i], pc_resolution,
-                                                                     grid_coefficient=5, plot_graphics=False,
+                                                                     grid_coefficient=5, plot_graphics=True,
                                                                      dilation_meters=1.0, erosion_meters=1.0)
             slabs.append({'polygon': polygon, 'polygon_x_coords': x_coords, 'polygon_y_coords': y_coords,
                           'slab_bottom_z_coord': slab_bottom_z_coord, 'thickness': bottom_floor_slab_thickness})
@@ -349,8 +349,8 @@ def identify_slabs(points_xyz, points_rgb, bottom_floor_slab_thickness, top_floo
 
             # create hull for the slab
             x_coords, y_coords, polygon = create_hull_from_histogram(slab_points, pc_resolution,
-                                                                     grid_coefficient=5, plot_graphics=False,
-                                                                     dilation_meters=1.2, erosion_meters=1.2)
+                                                                     grid_coefficient=5, plot_graphics=True,
+                                                                     dilation_meters=1.5, erosion_meters=1.5)
             slabs.append({'polygon': polygon, 'polygon_x_coords': x_coords, 'polygon_y_coords': y_coords,
                           'slab_bottom_z_coord': slab_bottom_z_coord, 'thickness': slab_thickness})
             print('Slab no. %d: bottom (z-coordinate) = %.3f m, thickness = %0.1f mm'
@@ -362,8 +362,8 @@ def identify_slabs(points_xyz, points_rgb, bottom_floor_slab_thickness, top_floo
 
             # create hull for the slab
             x_coords, y_coords, polygon = create_hull_from_histogram(horiz_surface_planes[i], pc_resolution,
-                                                                     grid_coefficient=5, plot_graphics=False,
-                                                                     dilation_meters=0.6, erosion_meters=0.6)
+                                                                     grid_coefficient=5, plot_graphics=True,
+                                                                     dilation_meters=1.5, erosion_meters=1.5)
             slabs.append({'polygon': polygon, 'polygon_x_coords': x_coords, 'polygon_y_coords': y_coords,
                           'slab_bottom_z_coord': slab_bottom_z_coord, 'thickness': top_floor_ceiling_thickness})
             print('Slab no. %d: bottom (z-coordinate) = %.3f m, thickness = %0.1f mm'
@@ -703,7 +703,7 @@ def check_overlap_parallel_segments(seg1, seg2, min_overlap):
     return overlap_length > min_overlap
 
 
-def group_segments(segments, max_wall_thickness, wall_label, angle_tolerance=1):
+def group_segments(segments, max_wall_thickness, wall_label, angle_tolerance=5):
     """Group segments that are parallel with a small tolerance."""
     grouped = []
     wall_labels = []
@@ -890,7 +890,7 @@ def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minim
                    maximum_wall_thickness, z_floor, z_ceiling, grid_coefficient=5, slab_polygon=None,
                    exterior_scan=False, exterior_walls_thickness=0.3):
     x_coords, y_coords, z_coords = zip(*pointcloud)
-    z_section_boundaries = [0.9, 1.0]  # percentage of the height for the storey sections
+    z_section_boundaries = [0.85, 1.2]  # percentage of the height for the storey sections
 
     # Calculate z-coordinate limits
     z_max_in_point_cloud = np.max(z_coords)
@@ -911,18 +911,18 @@ def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minim
     y_values_full = np.arange(y_min + 0.5 * pixel_size, y_max, pixel_size)
     grid_full, _, _ = np.histogram2d(points_2d[:, 0], points_2d[:, 1], bins=[x_values_full, y_values_full])
     grid_full = grid_full.T
-    # plot_histogram(grid_full, x_values_full, y_values_full)
+    plot_histogram(grid_full, x_values_full, y_values_full)
 
     # Convert the 2D histogram to binary (mask) based on a threshold
     threshold = 0.01  # relative point cloud density
     print("Converting the 2D histogram to binary (mask) based on a threshold")
     binary_image = (grid_full > threshold).astype(np.uint8) * 255
-    # plot_binary_image(binary_image)
+    plot_binary_image(binary_image)
 
     # Pre-process the binary image
     print("Pre-processing the binary image")
     binary_image = closing(binary_image, footprint_rectangle((5, 5))) # closes small holes in the binary mask
-    # plot_binary_image(binary_image)
+    plot_binary_image(binary_image)
 
     # Find contours in the binary image
     print("Finding contours in the binary image")
@@ -938,14 +938,14 @@ def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minim
         transformation_matrix = np.float32([[1, 0, shift_x], [0, 1, shift_y]])
         adjusted_cnt = cv2.transform(cnt, transformation_matrix)
         adjusted_contours.append(adjusted_cnt)
-    # plot_contours(adjusted_contours)
+    plot_contours(adjusted_contours)
 
     # Extract all segments from contours
     print("Extracting all segments from contours with Douglas-Peuckert algorithm")
     all_segments = []
     for contour in adjusted_contours:
         all_segments.extend(get_line_segments(contour, pixel_size,
-                                              segment_approximation_tolerance=0.019))
+                                              segment_approximation_tolerance=0.04))
 
     # Convert pixel-based segment coordinates to real-world coordinates
     print("Converting pixel-based segment coordinates to real-world coordinates")
@@ -957,13 +957,13 @@ def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minim
     filtered_segments = [
         segment for segment in segments_in_world_coords
         if distance_between_points(segment[0], segment[1]) >= minimum_wall_length]
-    # plot_segments_with_random_colors(filtered_segments, name="filtered_wall_segments")
+    plot_segments_with_random_colors(filtered_segments, name="filtered_wall_segments")
 
     # Merge the co-linear segments using the updated function
     print("Merging the co-linear segments")
     final_wall_segments = merge_collinear_segments(filtered_segments.copy(), minimum_wall_thickness,
                                                    maximum_wall_thickness)
-    # plot_segments_with_random_colors(final_wall_segments, name="final_wall_segments")
+    plot_segments_with_random_colors(final_wall_segments, name="final_wall_segments")
 
     # Group parallel segments
     print("Grouping parallel segments")
@@ -980,7 +980,7 @@ def identify_walls(pointcloud, pointcloud_resolution, minimum_wall_length, minim
         parallel_groups.extend(parallel_facade_groups)
         wall_labels.extend(wall_labels_facade)
 
-    # plot_parallel_wall_groups(parallel_groups)
+    plot_parallel_wall_groups(parallel_groups)
     # plot_segments_with_candidates(facade_wall_candidates)
 
     wall_axes, wall_thicknesses = [], []

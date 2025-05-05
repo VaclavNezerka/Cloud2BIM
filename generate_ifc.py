@@ -402,7 +402,7 @@ class IFCmodel:
             ProfileName="Slab perimeter",
             OuterCurve=self.ifc_file.create_entity("IfcPolyline", Points=polygon_points)
         )
-        # [MODIFIED] Use the new helper to create a placement for the slab
+
         slab_placement = self.create_local_placement(
             (0.0, 0.0, float(slab_z_position)),
             axis=self.ifc_file.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0)),
@@ -419,8 +419,9 @@ class IFCmodel:
             "IfcDirection",
             DirectionRatios=(0.0, 0.0, 1.0)
         )
-        # [MODIFIED] Create extruded solid using the helper
-        slab_extrusion = self.create_extruded_solid(polyline_profile, axis_placement_extrusion, slab_extrusion_direction, slab_height)
+
+        slab_extrusion = self.create_extruded_solid(polyline_profile, axis_placement_extrusion, slab_extrusion_direction,
+                                                    slab_height)
         shape_rep = self.create_shape_representation(self.geom_rep_sub_context, "Body", "SweptSolid", [slab_extrusion])
         slab = self.ifc_file.create_entity(
             "IfcSlab",
@@ -1155,16 +1156,174 @@ class IFCmodel:
         )
         return landing
 
-    def create_stair_member_representation(self, number_of_raisers, raiser_height, tread_length, flight_width):
-        """
-        number_of_raiser: Total number of vertical elements (e.g., 15 risers).
-        riser_height: Vertical height of a single riser, in meters (e.g., 0.17 m).
-        tread_length: Horizontal depth of each tread (also called "going"), e.g., 0.25 m.
-        flight_width: Total width of the stair flight (e.g., 1.2 m).
-        """
+    def create_landing_slab_representation(self, points, thickness):
+        polygon_points = [self.ifc_file.create_entity("IfcCartesianPoint", Coordinates=point)
+            for point in points]
+
+        # Close the polygon if needed
+        if polygon_points[0].Coordinates != polygon_points[-1].Coordinates:
+            polygon_points.append(polygon_points[0])
+
+        polyline_profile = self.ifc_file.create_entity(
+            "IfcArbitraryClosedProfileDef",
+            ProfileType="AREA",
+            ProfileName="Slab perimeter",
+            OuterCurve=self.ifc_file.create_entity("IfcPolyline", Points=polygon_points)
+        )
+
+        axis_placement_extrusion = self.ifc_file.create_entity(
+            "IfcAxis2Placement3D",
+            Location=self.ifc_file.create_entity("IfcCartesianPoint", Coordinates=(0.0, 0.0, 0.0)),
+            Axis=self.ifc_file.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0)),
+            RefDirection=self.ifc_file.create_entity("IfcDirection", DirectionRatios=(1.0, 0.0, 0.0))
+        )
+
+        slab_extrusion_direction = self.ifc_file.create_entity(
+            "IfcDirection",
+            DirectionRatios=(0.0, 0.0, 1.0)
+        )
+
+        slab_extrusion = self.create_extruded_solid(polyline_profile, axis_placement_extrusion,
+                                                    slab_extrusion_direction, thickness)
+        shape = self.create_shape_representation(self.geom_rep_sub_context, "Body", "SweptSolid", [slab_extrusion])
+        shape_def = self.ifc_file.create_entity(
+            "IfcProductDefinitionShape",
+            Representations=[shape]
+        )
+
+        return shape_def
+
+    def create_curved_stair_representation(self, number_of_raisers, raiser_height, angle_per_step_deg, inner_radius,
+                                           step_width):
         vertices = []
         vertex_index_map = {}
         faces = []
+        used_edges = set()
+
+        def add_vertex(coord):
+            if coord in vertex_index_map:
+                return vertex_index_map[coord]
+            index = len(vertices)
+            vertices.append(coord)
+            vertex_index_map[coord] = index
+            return index
+
+        def add_face(face_indices):
+            nonlocal faces, used_edges
+            reversed_needed = any(
+                (face_indices[i], face_indices[(i + 1) % len(face_indices)]) in used_edges
+                for i in range(len(face_indices))
+            )
+            if reversed_needed:
+                face_indices = list(reversed(face_indices))
+            for i in range(len(face_indices)):
+                a = face_indices[i]
+                b = face_indices[(i + 1) % len(face_indices)]
+                used_edges.add((a, b))
+            faces.append(face_indices)
+
+        angle_per_step_rad = math.radians(angle_per_step_deg)
+        outer_radius = inner_radius + step_width
+
+        for i in range(number_of_raisers):
+            angle_start = i * angle_per_step_rad
+            angle_end = (i + 1) * angle_per_step_rad
+            z = i * raiser_height
+            z_top = (i + 1) * raiser_height
+
+            # Define bottom and top points on inner and outer arcs
+            A = (inner_radius * math.cos(angle_start), inner_radius * math.sin(angle_start), z)
+            B = (inner_radius * math.cos(angle_start), inner_radius * math.sin(angle_start), z_top)
+            C = (outer_radius * math.cos(angle_start), outer_radius * math.sin(angle_start), z)
+            D = (outer_radius * math.cos(angle_start), outer_radius * math.sin(angle_start), z_top)
+
+            E = (inner_radius * math.cos(angle_end), inner_radius * math.sin(angle_end), z_top)
+            F = (outer_radius * math.cos(angle_end), outer_radius * math.sin(angle_end), z_top)
+
+            idx_A = add_vertex(A)
+            idx_B = add_vertex(B)
+            idx_C = add_vertex(C)
+            idx_D = add_vertex(D)
+            idx_E = add_vertex(E)
+            idx_F = add_vertex(F)
+
+            # Riser (vertical front)
+            add_face([idx_A, idx_B, idx_D, idx_C])
+
+            # Tread surface (horizontal top)
+            add_face([idx_B, idx_E, idx_F, idx_D])
+
+            if i == 0:
+                first_inner_idx = idx_A
+                first_outer_idx = idx_C
+            if i == number_of_raisers - 1:
+                last_inner_idx = idx_E
+                last_outer_idx = idx_F
+
+        # Side faces
+        # Inner side face
+        side_inner_indices = [idx for idx, coord in sorted(
+            [(idx, vtx) for idx, vtx in enumerate(vertices) if
+             math.isclose(math.hypot(vtx[0], vtx[1]), inner_radius, abs_tol=1e-4)],
+            key=lambda x: x[1][2]
+        )]
+        add_face(side_inner_indices)
+
+        # Outer side face
+        side_outer_indices = [idx for idx, coord in sorted(
+            [(idx, vtx) for idx, vtx in enumerate(vertices) if
+             math.isclose(math.hypot(vtx[0], vtx[1]), outer_radius, abs_tol=1e-4)],
+            key=lambda x: x[1][2]
+        )]
+        add_face(side_outer_indices)
+
+        # Bottom face
+        add_face([first_inner_idx, first_outer_idx, last_outer_idx, last_inner_idx])
+
+        # Back vertical face (last riser)
+        add_face([last_inner_idx, last_outer_idx, idx_F, idx_E])
+
+        # Bottom closure face
+        add_face([first_inner_idx, first_outer_idx, last_outer_idx, last_inner_idx])
+
+        # IFC entities
+        point_list = self.ifc_file.create_entity("IfcCartesianPointList3D", CoordList=vertices)
+
+        indexed_faces = []
+        for face in faces:
+            one_based_face = [index + 1 for index in face]
+            face_entity = self.ifc_file.create_entity("IfcIndexedPolygonalFace", CoordIndex=one_based_face)
+            indexed_faces.append(face_entity)
+
+        polygon_face_set = self.ifc_file.create_entity(
+            "IfcPolygonalFaceSet",
+            Coordinates=point_list,
+            Closed=True,
+            Faces=indexed_faces
+        )
+
+        tessellation = self.ifc_file.create_entity(
+            "IfcShapeRepresentation",
+            ContextOfItems=self.geom_rep_sub_context,
+            RepresentationIdentifier="Body",
+            RepresentationType="Tessellation",
+            Items=[polygon_face_set]
+        )
+
+        shape = self.ifc_file.create_entity(
+            "IfcProductDefinitionShape",
+            Representations=[tessellation]
+        )
+
+        return shape
+
+    def create_stair_member_representation(self, number_of_raisers, raiser_height, tread_length, flight_width):
+        vertices = []
+        vertex_index_map = {}
+        faces = []
+
+        # Tracks all used oriented edges (a -> b)
+        used_edges = set()
 
         def add_vertex(coord):
             """Add vertex only if it doesn't exist yet, return its index."""
@@ -1175,13 +1334,40 @@ class IFCmodel:
             vertex_index_map[coord] = index
             return index
 
-        # Step 1: Front risers and top treads
+        def add_face(face_indices):
+            """Add a face with edge orientation checking to avoid GEM001 violations."""
+            nonlocal faces, used_edges
+
+            def edge(a, b):
+                return (a, b)
+
+            # Check all oriented edges of the face
+            reversed_needed = False
+            for i in range(len(face_indices)):
+                a = face_indices[i]
+                b = face_indices[(i + 1) % len(face_indices)]
+                if (a, b) in used_edges:
+                    reversed_needed = True
+                    break
+
+            # Reverse if needed to maintain consistent orientation
+            if reversed_needed:
+                face_indices = list(reversed(face_indices))
+
+            # Register the edges
+            for i in range(len(face_indices)):
+                a = face_indices[i]
+                b = face_indices[(i + 1) % len(face_indices)]
+                used_edges.add((a, b))
+
+            faces.append(face_indices)
+
+        # Step 1: Front risers and treads
         for i in range(number_of_raisers):
             x = i * tread_length
             z = i * raiser_height
             z_top = (i + 1) * raiser_height
 
-            # Front riser
             A = (x, 0.0, z)
             B = (x, 0.0, z_top)
             C = (x, flight_width, z)
@@ -1192,10 +1378,8 @@ class IFCmodel:
             idx_C = add_vertex(C)
             idx_D = add_vertex(D)
 
-            front_face = [idx_A, idx_B, idx_D, idx_C]
-            faces.append(front_face)
+            add_face([idx_A, idx_B, idx_D, idx_C])  # Front riser
 
-            # Tread surface
             x_next = (i + 1) * tread_length
             E = (x_next, 0.0, z_top)
             F = (x_next, flight_width, z_top)
@@ -1203,8 +1387,7 @@ class IFCmodel:
             idx_E = add_vertex(E)
             idx_F = add_vertex(F)
 
-            tread_face = [idx_B, idx_E, idx_F, idx_D]
-            faces.append(tread_face)
+            add_face([idx_B, idx_E, idx_F, idx_D])  # Tread surface
 
             if i == 0:
                 first_A_idx = idx_A
@@ -1214,64 +1397,47 @@ class IFCmodel:
                 last_E_idx = idx_E
                 last_F_idx = idx_F
 
-        # Step 2: Create left side panel (Y = 0.0)
-        # Key corner points
-        X = (number_of_raisers * tread_length, 0.0, (number_of_raisers - 1) * raiser_height)  # step-back corner
-        Y = (tread_length, 0.0, 0.0)  # bottom forward closure
-
+        # Step 2: Left side panel
+        X = (number_of_raisers * tread_length, 0.0, (number_of_raisers - 1) * raiser_height)
+        Y = (tread_length, 0.0, 0.0)
         idx_X = add_vertex(X)
         idx_Y = add_vertex(Y)
 
-        # Filter out X and Y if already in vertex list (to avoid duplication)
         left_side_points = [
             (idx, coord) for idx, coord in enumerate(vertices)
             if coord[1] == 0.0 and coord not in [X, Y]
         ]
-
-        # Final face indices
-        left_face_indices = [idx for idx, _ in left_side_points]
+        left_face_indices = [idx for idx, _ in sorted(left_side_points, key=lambda item: item[1][2])]
         left_face_indices.extend([idx_X, idx_Y])
+        add_face(left_face_indices)
 
-        faces.append(left_face_indices)
-
-        # Step 3: Create right side panel (Y = flight_width)
+        # Step 3: Right side panel
         X_r = (number_of_raisers * tread_length, flight_width, (number_of_raisers - 1) * raiser_height)
         Y_r = (tread_length, flight_width, 0.0)
-
         idx_X_r = add_vertex(X_r)
         idx_Y_r = add_vertex(Y_r)
 
-        # Filter out X and Y if already in vertex list (to avoid duplication)
         right_side_points = [
             (idx, coord) for idx, coord in enumerate(vertices)
             if coord[1] == flight_width and coord not in [X_r, Y_r]
         ]
-
-        # Final face indices
-        right_face_indices = [idx for idx, _ in right_side_points]
+        right_face_indices = [idx for idx, _ in sorted(right_side_points, key=lambda item: item[1][2])]
         right_face_indices.extend([idx_X_r, idx_Y_r])
+        add_face(right_face_indices)
 
-        faces.append(right_face_indices)
+        # Step 4: Bottom face
+        add_face([idx_Y, idx_Y_r, first_C_idx, first_A_idx])
 
-        # Step 4: Bottom face (connecting first A+C and bottom edge)
-        bottom_face = [idx_Y, idx_Y_r, first_C_idx, first_A_idx]
-        faces.append(bottom_face)
-
-        # Step 5: Back vertical face (last riser)
-        back_face = [idx_X, idx_X_r, last_F_idx, last_E_idx]
-        faces.append(back_face)
+        # Step 5: Back vertical face
+        add_face([idx_X, idx_X_r, last_F_idx, last_E_idx])
 
         # Step 6: Back underside face
-        back_bottom_face = [idx_Y, idx_Y_r, idx_X_r, idx_X]
-        faces.append(back_bottom_face)
+        add_face([idx_Y, idx_Y_r, idx_X_r, idx_X])
 
-        # --- Create IFC entities ---
-
-        # Create the point list. The vertices remain unchanged.
+        # IFC Geometry
         point_list = self.ifc_file.create_entity("IfcCartesianPointList3D", CoordList=vertices)
 
         indexed_faces = []
-        # IMPORTANT: Adjust indices from 0-based to 1-based by adding 1 to each value.
         for face in faces:
             one_based_face = [index + 1 for index in face]
             face_entity = self.ifc_file.create_entity("IfcIndexedPolygonalFace", CoordIndex=one_based_face)
@@ -1316,13 +1482,20 @@ class IFCmodel:
 
         # Generate geometry for each part if none is provided
         for part in stair_parts:
-            if part["key"] == "flight":
+            if part["key"] == "flight_straight":
                 part["geometry_representation"] = self.create_stair_member_representation(part["num_risers"],
                                                                                           part["raiser_height"],
                                                                                           part["tread_length"],
                                                                                           part["flight_width"])
             elif part["key"] == "landing":
-                part["geometry_representation"] = self.create_landing_slab()
+                part["geometry_representation"] = self.create_landing_slab_representation(part["points"],
+                                                                                          part["thickness"])
+            elif part["key"] == "flight_curved":
+                part["geometry_representation"] = self.create_curved_stair_representation(part["num_risers"],
+                                                                                          part["raiser_height"],
+                                                                                          part["angle_per_step_deg"],
+                                                                                          part["inner_radius"],
+                                                                                          part["flight_width"])
 
         # Create the logical stair container (IfcStair)
         stair = self.create_stairs_entity(stair_id)
@@ -1330,11 +1503,14 @@ class IFCmodel:
         # Create and collect individual stair parts (flights and landings)
         parts = []
         for part in stair_parts:
-            if part["key"] == "flight":
+            if part["key"] == "flight_straight":
                 flight = self.create_stair_flight(part["placement"], part["geometry_representation"])
                 parts.append(flight)
             elif part["key"] == "landing":
                 landing = self.create_landing_slab(part["placement"], part["geometry_representation"])
+                parts.append(landing)
+            elif part["key"] == "flight_curved":
+                landing = self.create_stair_flight(part["placement"], part["geometry_representation"])
                 parts.append(landing)
 
         # Create an aggregation relationship between the stair container and its parts
