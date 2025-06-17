@@ -31,18 +31,18 @@ https://zenodo.org/records/14221915
 ```
 ## Citation
 
-If you find this project or any part of it useful in your research or work, please consider citing the following preprint:
+If you find this project or any part of it useful in your research or work, please consider citing the following article:
 ```
-@misc{Cloud2BIM2025, 
-title={Cloud2BIM: An open-source automatic pipeline for efficient conversion of large-scale point clouds into IFC format}, 
-    author={Slávek Zbirovský and Václav Nežerka}, 
-    year={2025}, 
-    eprint={2503.11498}, 
-    archivePrefix={arXiv}, 
-    primaryClass={cs.CV}, 
-    url={https://arxiv.org/abs/2503.11498}, 
-    note={Accessed: 28.3.2025} 
-    }
+@article{Cloud2BIM_2025,
+    title = {Open-source automatic pipeline for efficient conversion of large-scale point clouds to IFC format},
+    journal = {Automation in Construction},
+    volume = {177},
+    pages = {106303},
+    year = {2025},
+    issn = {0926-5805},
+    doi = {https://doi.org/10.1016/j.autcon.2025.106303},
+    author = {Slávek Zbirovský and Václav Nežerka},
+}
 ```
 # License
 GPL (General Public License)
