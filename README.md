@@ -5,7 +5,7 @@ Cloud2BIM automates the Scan-to-BIM process by converting point clouds into 3D p
 To install Cloud2BIM, follow these steps:
 git clone 
 ```
-https://github.com/yourusername/Cloud2BIM.git
+https://github.com/VaclavNezerka/Cloud2BIM.git
 ```
 
 Install dependencies:
