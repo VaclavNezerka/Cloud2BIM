@@ -327,6 +327,7 @@ def identify_slabs(points_xyz, points_rgb, bottom_floor_slab_thickness, top_floo
 
     # merge lower and upper surface of each horiz_surface and create a hull
     slabs = []
+    os.makedirs("output_xyz", exist_ok=True)
     for i in range(len(h_surf_candidates)):
         if i == 0:
             print('Creating hull for slab no. %d of %d.' % ((i + 1), int(len(h_surf_candidates) / 2) + 1))
@@ -368,7 +369,6 @@ def identify_slabs(points_xyz, points_rgb, bottom_floor_slab_thickness, top_floo
                           'slab_bottom_z_coord': slab_bottom_z_coord, 'thickness': top_floor_ceiling_thickness})
             print('Slab no. %d: bottom (z-coordinate) = %.3f m, thickness = %0.1f mm'
                   % ((i + 1) / 2, slab_bottom_z_coord, top_floor_ceiling_thickness * 1000))
-
         save_xyz(horiz_surface_planes[i], 'output_xyz/horiz_surface_%d.xyz' % (i + 1))
 
     # plot the segmented plane

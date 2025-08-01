@@ -126,6 +126,10 @@ for i, storey_pointcloud in enumerate(point_cloud_storeys):
     print("-" * 50)
     print("Rectangular openings detection")
     print("-" * 50)
+    os.makedirs("images", exist_ok=True)
+    os.makedirs("images/pdf", exist_ok=True)
+    os.makedirs("images/pdf", exist_ok=True)
+    os.makedirs("images/wall_outputs_images/", exist_ok=True)
     for j in range(len(start_points)):
         wall_id += 1
         walls.append({'wall_id': wall_id, 'storey': i + 1, 'start_point': start_points[j], 'end_point': end_points[j],
