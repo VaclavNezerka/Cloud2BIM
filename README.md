@@ -45,5 +45,4 @@ If you find this project or any part of it useful in your research or work, plea
 }
 ```
 # License
-GPL (General Public License)
-https://www.gnu.org/licenses/gpl-3.0.html
+MIT License
