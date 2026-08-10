@@ -1,8 +1,10 @@
 e57_input: false
 e57_files:
-  - input_e57/werk_satny_vstup.e57
+  - input_e57/Boleslav_2.NP.e57
 xyz_files:
-  - input_xyz/new_data/ISPR_UO2_1st.xyz
+  - input_xyz/new_data/Kladno_station_floor_no_exterior.xyz
+
+
 dilute: false
 dilution_factor: 10
 exterior_scan: false

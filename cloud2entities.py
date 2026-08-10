@@ -1,6 +1,6 @@
 from aux_functions import *
 from generate_ifc import IFCmodel
-from space_generator import *
+from space_generator import identify_zones
 
 # === Load Configuration ===
 config = load_config_and_variables()
@@ -84,7 +84,7 @@ print("-" * 50)
 slabs, horizontal_surface_planes = identify_slabs(points_xyz, points_rgb, bfs_thickness,
                                                   tfs_thickness, z_step=0.15,
                                                   pc_resolution=pc_resolution,
-                                                  plot_segmented_plane=False)  # plot with open 3D
+                                                  plot_segmented_plane=True)  # plot with open 3D
 
 # SECTION: Segment Walls and Classify Openings
 print("-" * 50)
@@ -93,7 +93,7 @@ print("-" * 50)
 
 # merge_horizontal_pointclouds_in_storey(horizontal_surface_planes)
 point_cloud_storeys = split_pointcloud_to_storeys(points_xyz, slabs)
-# display_cross_section_plot(point_cloud_storeys, slabs)
+display_cross_section_plot(point_cloud_storeys, slabs)
 walls, all_openings, zones = [], [], []
 wall_id = 0
 for i, storey_pointcloud in enumerate(point_cloud_storeys):
@@ -420,4 +420,4 @@ for wall in walls:
 
 # Write the IFC model to a file
 ifc_model.write()
-last_time = log('\nIFC model saved to %s.' % ifc_output_file, last_time, log_filename)
+lasttime = log('\nIFC model saved to %s.' % ifc_output_file, last_time, log_filename)
